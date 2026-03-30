@@ -23,7 +23,8 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from browser_use import Agent, Browser, BrowserConfig
+from browser_use import Agent
+from browser_use.browser.profile import BrowserProfile
 from langchain_anthropic import ChatAnthropic
 
 BASE_DIR = Path(__file__).parent
@@ -50,7 +51,7 @@ def substitute_vars(text: str, env: dict[str, str]) -> str:
 async def run_case(
     case: dict,
     llm: ChatAnthropic,
-    browser: Browser,
+    profile: BrowserProfile,
     env: dict[str, str],
 ) -> CaseResult:
     label = case.get("label", case["id"])
@@ -59,10 +60,10 @@ async def run_case(
     print(f"\n[{label}] Starting...")
     t0 = time.time()
     try:
-        agent = Agent(task=task, llm=llm, browser=browser)
+        agent = Agent(task=task, llm=llm, browser_profile=profile)
         result = await agent.run()
         final = result.final_result() if result else None
-        passed = final is not None
+        passed = result.is_successful() if result else False
         detail = str(final) if final else "No result returned"
         duration = time.time() - t0
         print(f"[{label}] {'PASS' if passed else 'FAIL'} ({duration:.1f}s): {detail[:100]}")
@@ -118,36 +119,33 @@ async def main() -> None:
     print(f"Project: {config.get('description', slug)}\n")
 
     llm = ChatAnthropic(model="claude-sonnet-4-6", timeout=120, stop=None)
-    browser = Browser(config=BrowserConfig(headless=True))
+    profile = BrowserProfile(headless=True, keep_alive=False)
 
     results: list[CaseResult] = []
     skipped_ids: set[str] = set()
 
-    try:
-        for case in enabled_cases:
-            # Skip if a dependency failed and skip_dependents_on_fail was set
-            depends_on = case.get("depends_on")
-            if depends_on and depends_on in skipped_ids:
-                results.append(
-                    CaseResult(
-                        id=case["id"],
-                        label=case.get("label", case["id"]),
-                        passed=False,
-                        detail=f"Skipped — dependency '{depends_on}' failed",
-                        duration_s=0,
-                        skipped=True,
-                    )
+    for case in enabled_cases:
+        # Skip if a dependency failed and skip_dependents_on_fail was set
+        depends_on = case.get("depends_on")
+        if depends_on and depends_on in skipped_ids:
+            results.append(
+                CaseResult(
+                    id=case["id"],
+                    label=case.get("label", case["id"]),
+                    passed=False,
+                    detail=f"Skipped — dependency '{depends_on}' failed",
+                    duration_s=0,
+                    skipped=True,
                 )
-                skipped_ids.add(case["id"])
-                continue
+            )
+            skipped_ids.add(case["id"])
+            continue
 
-            result = await run_case(case, llm, browser, env)
-            results.append(result)
+        result = await run_case(case, llm, profile, env)
+        results.append(result)
 
-            if not result.passed and case.get("skip_dependents_on_fail", False):
-                skipped_ids.add(case["id"])
-    finally:
-        await browser.close()
+        if not result.passed and case.get("skip_dependents_on_fail", False):
+            skipped_ids.add(case["id"])
 
     # Save results
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
