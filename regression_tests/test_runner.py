@@ -25,7 +25,7 @@ from pathlib import Path
 
 from browser_use import Agent
 from browser_use.browser.profile import BrowserProfile
-from langchain_openai import ChatOpenAI
+from browser_use.llm.openrouter.chat import ChatOpenRouter
 
 BASE_DIR = Path(__file__).parent
 TEST_CASES_DIR = BASE_DIR / "test_cases"
@@ -50,7 +50,7 @@ def substitute_vars(text: str, env: dict[str, str]) -> str:
 
 async def run_case(
     case: dict,
-    llm: ChatOpenAI,
+    llm: ChatOpenRouter,
     profile: BrowserProfile,
     env: dict[str, str],
 ) -> CaseResult:
@@ -119,24 +119,13 @@ async def main() -> None:
     print(f"Project: {config.get('description', slug)}\n")
 
     openrouter_key = env.get("OPENROUTER_API_KEY", "")
-    anthropic_key = env.get("ANTHROPIC_API_KEY", "")
-
-    if openrouter_key:
-        model = env.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
-        llm = ChatOpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=openrouter_key,
-            model=model,
-            timeout=120,
-        )
-        print(f"LLM: OpenRouter / {model}")
-    elif anthropic_key:
-        from langchain_anthropic import ChatAnthropic
-        llm = ChatAnthropic(model="claude-sonnet-4-6", timeout=120, stop=None)
-        print("LLM: Anthropic claude-sonnet-4-6")
-    else:
-        print("ERROR: Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY")
+    if not openrouter_key:
+        print("ERROR: OPENROUTER_API_KEY is not set")
         sys.exit(1)
+
+    model = env.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
+    llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=120)
+    print(f"LLM: OpenRouter / {model}")
     profile = BrowserProfile(headless=True, keep_alive=False)
 
     results: list[CaseResult] = []
