@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import fs from "fs";
 import path from "path";
 
 const REGRESSION_DIR = path.join(process.cwd(), "..", "regression_tests");
 const RESULTS_DIR = path.join(REGRESSION_DIR, "results");
+
+/** Resolve the uv binary — handles systemd not having ~/.local/bin in PATH */
+function findUv(): string {
+  const candidates = [
+    "/usr/local/bin/uv",
+    "/root/.local/bin/uv",
+    "/root/.cargo/bin/uv",
+    "/home/ubuntu/.local/bin/uv",
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  try {
+    return execSync("which uv", { encoding: "utf-8" }).trim();
+  } catch {
+    return "uv"; // fallback, will fail with a clear error
+  }
+}
 
 function runningFile(project: string) {
   return path.join(RESULTS_DIR, project, "running.json");
@@ -35,11 +53,15 @@ export async function POST(req: NextRequest) {
   const runId = new Date().toISOString().replace(/[:.]/g, "").replace("Z", "Z");
   fs.writeFileSync(lockFile, JSON.stringify({ run_id: runId, started_at: new Date().toISOString() }));
 
-  const proc = spawn("uv", ["run", "test_runner.py", project], {
+  const uvBin = findUv();
+  const proc = spawn(uvBin, ["run", "test_runner.py", project], {
     cwd: REGRESSION_DIR,
     detached: true,
-    stdio: "ignore",
-    env: { ...process.env },
+    stdio: ["ignore", fs.openSync(path.join(projectResultsDir, "last_run.log"), "w"), fs.openSync(path.join(projectResultsDir, "last_run.log"), "w")],
+    env: {
+      ...process.env,
+      PATH: `${process.env.PATH}:/usr/local/bin:/root/.local/bin:/root/.cargo/bin`,
+    },
   });
 
   proc.on("exit", () => {
