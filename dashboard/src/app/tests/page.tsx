@@ -26,6 +26,7 @@ interface CaseResult {
   detail: string;
   duration_s: number;
   skipped: boolean;
+  recording?: string | null;
 }
 
 interface RunResult {
@@ -37,6 +38,21 @@ interface RunResult {
   failed: number;
   skipped: number;
   results: CaseResult[];
+}
+
+/** Extract all {{VAR}} placeholders from a list of test cases */
+function extractVars(testCases: TestCase[]): string[] {
+  const found: Record<string, true> = {};
+  for (const tc of testCases) {
+    let m: RegExpExecArray | null;
+    const re = /\{\{([A-Z0-9_]+)\}\}/g;
+    while ((m = re.exec(tc.task)) !== null) found[m[1]] = true;
+  }
+  return Object.keys(found).sort();
+}
+
+function isSensitive(key: string) {
+  return /PASSWORD|SECRET|TOKEN|KEY|PASS/i.test(key);
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -343,6 +359,21 @@ function RunResultCard({ run, defaultOpen }: { run: RunResult; defaultOpen?: boo
                       {r.detail}
                     </p>
                   )}
+                  {r.recording && (
+                    <a
+                      href={`/api/tests/recordings?file=${encodeURIComponent(r.recording)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 mt-1 text-xs px-2 py-0.5 rounded"
+                      style={{ background: "rgba(0,212,255,0.08)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.2)" }}
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none" />
+                      </svg>
+                      Recording
+                    </a>
+                  )}
                 </div>
               </div>
             );
@@ -368,6 +399,8 @@ export default function TestsPage() {
   const [showNewForm, setShowNewForm] = useState(false);
   const [newProjectSlug, setNewProjectSlug] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
+  const [envVars, setEnvVars] = useState<Record<string, string>>({});
+  const [envSaving, setEnvSaving] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load project list
@@ -400,6 +433,24 @@ export default function TestsPage() {
     }
   }, []);
 
+  // Load env vars for selected project
+  const loadEnvVars = useCallback(async (slug: string) => {
+    const res = await fetch(`/api/tests/env?project=${encodeURIComponent(slug)}`);
+    if (res.ok) setEnvVars(await res.json());
+    else setEnvVars({});
+  }, []);
+
+  // Save env vars
+  const saveEnvVars = useCallback(async (vars: Record<string, string>, slug: string) => {
+    setEnvSaving(true);
+    await fetch(`/api/tests/env?project=${encodeURIComponent(slug)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(vars),
+    });
+    setEnvSaving(false);
+  }, []);
+
   // Poll run status
   const pollRunStatus = useCallback(async (slug: string) => {
     const res = await fetch(`/api/tests/run?project=${encodeURIComponent(slug)}`);
@@ -421,9 +472,10 @@ export default function TestsPage() {
     if (!selectedProject) return;
     loadConfig(selectedProject);
     loadResults(selectedProject);
+    loadEnvVars(selectedProject);
     setEditingCase(null);
     setShowNewForm(false);
-  }, [selectedProject, loadConfig, loadResults]);
+  }, [selectedProject, loadConfig, loadResults, loadEnvVars]);
 
   // Save config to server
   const saveConfig = useCallback(async (updated: TestConfig) => {
@@ -860,6 +912,53 @@ export default function TestsPage() {
                   </div>
                 )}
               </div>
+
+              {/* ── Env Vars ── */}
+              {(() => {
+                const vars = config ? extractVars(config.test_cases) : [];
+                if (vars.length === 0) return null;
+                return (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                        Test Variables
+                      </span>
+                      {envSaving && (
+                        <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2">
+                          <path d="M21 12a9 9 0 1 1-9-9" />
+                        </svg>
+                      )}
+                    </div>
+                    <div
+                      className="rounded p-3 space-y-2"
+                      style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}
+                    >
+                      <p className="text-xs" style={{ color: "#4a5568" }}>
+                        Placeholders detected in test prompts — values saved per project.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {vars.map((key) => (
+                          <div key={key} className="space-y-0.5">
+                            <label className="text-xs font-mono" style={{ color: "#94a3b8" }}>
+                              {`{{${key}}}`}
+                            </label>
+                            <input
+                              type={isSensitive(key) ? "password" : "text"}
+                              className="w-full px-2.5 py-1.5 rounded text-xs outline-none font-mono"
+                              style={INPUT_STYLE}
+                              value={envVars[key] ?? ""}
+                              onChange={(e) => setEnvVars((prev) => ({ ...prev, [key]: e.target.value }))}
+                              onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(30,45,74,0.8)"; if (selectedProject) saveEnvVars({ ...envVars }, selectedProject); }}
+                              onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(168,85,247,0.4)")}
+                              placeholder={isSensitive(key) ? "••••••••" : "value…"}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* ── Results ── */}
               <div className="space-y-3">

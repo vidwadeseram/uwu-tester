@@ -5,6 +5,16 @@ import path from "path";
 
 const REGRESSION_DIR = path.join(process.cwd(), "..", "regression_tests");
 const RESULTS_DIR = path.join(REGRESSION_DIR, "results");
+const TEST_CASES_DIR = path.join(REGRESSION_DIR, "test_cases");
+
+function loadProjectEnv(project: string): Record<string, string> {
+  const envFile = path.join(TEST_CASES_DIR, `${project}.env.json`);
+  try {
+    return fs.existsSync(envFile) ? JSON.parse(fs.readFileSync(envFile, "utf-8")) : {};
+  } catch {
+    return {};
+  }
+}
 
 /** Resolve the uv binary — handles systemd not having ~/.local/bin in PATH */
 function findUv(): string {
@@ -53,13 +63,16 @@ export async function POST(req: NextRequest) {
   const runId = new Date().toISOString().replace(/[:.]/g, "").replace("Z", "Z");
   fs.writeFileSync(lockFile, JSON.stringify({ run_id: runId, started_at: new Date().toISOString() }));
 
+  const projectEnv = loadProjectEnv(project);
   const uvBin = findUv();
+  const logFd = fs.openSync(path.join(projectResultsDir, "last_run.log"), "w");
   const proc = spawn(uvBin, ["run", "test_runner.py", project], {
     cwd: REGRESSION_DIR,
     detached: true,
-    stdio: ["ignore", fs.openSync(path.join(projectResultsDir, "last_run.log"), "w"), fs.openSync(path.join(projectResultsDir, "last_run.log"), "w")],
+    stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
+      ...projectEnv,
       PATH: `${process.env.PATH}:/usr/local/bin:/root/.local/bin:/root/.cargo/bin`,
     },
   });

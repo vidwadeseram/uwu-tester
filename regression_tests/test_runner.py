@@ -9,7 +9,7 @@ Usage:
   uv run test_runner.py <project_slug> [KEY=VALUE ...]
 
 Required env vars (or pass as KEY=VALUE args):
-  ANTHROPIC_API_KEY   — for claude-sonnet-4-6 (default LLM)
+  OPENROUTER_API_KEY  — for OpenRouter LLM access
 
 Any {{PLACEHOLDER}} in task strings is substituted with matching env vars.
 """
@@ -19,7 +19,7 @@ import json
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +40,7 @@ class CaseResult:
     detail: str
     duration_s: float
     skipped: bool = False
+    recording: str | None = None  # relative path to video file
 
 
 def substitute_vars(text: str, env: dict[str, str]) -> str:
@@ -51,15 +52,29 @@ def substitute_vars(text: str, env: dict[str, str]) -> str:
 async def run_case(
     case: dict,
     llm: ChatOpenRouter,
-    profile: BrowserProfile,
     env: dict[str, str],
+    recording_dir: Path | None = None,
 ) -> CaseResult:
     label = case.get("label", case["id"])
     task = substitute_vars(case["task"], env)
 
     print(f"\n[{label}] Starting...")
     t0 = time.time()
+
+    # Per-case recording directory
+    case_rec_dir: Path | None = None
+    if recording_dir is not None:
+        case_rec_dir = recording_dir / case["id"]
+        case_rec_dir.mkdir(parents=True, exist_ok=True)
+
     try:
+        profile = BrowserProfile(
+            headless=True,
+            keep_alive=False,
+            chromium_sandbox=False,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            save_recording_path=str(case_rec_dir) if case_rec_dir else None,
+        )
         agent = Agent(task=task, llm=llm, browser_profile=profile)
         result = await agent.run()
         final = result.final_result() if result else None
@@ -67,12 +82,21 @@ async def run_case(
         detail = str(final) if final else "No result returned"
         duration = time.time() - t0
         print(f"[{label}] {'PASS' if passed else 'FAIL'} ({duration:.1f}s): {detail[:100]}")
+
+        # Find video file if recorded
+        recording_rel: str | None = None
+        if case_rec_dir:
+            videos = list(case_rec_dir.glob("*.webm")) + list(case_rec_dir.glob("*.mp4"))
+            if videos:
+                recording_rel = str(videos[0].relative_to(RESULTS_DIR))
+
         return CaseResult(
             id=case["id"],
             label=label,
             passed=passed,
             detail=detail,
             duration_s=round(duration, 1),
+            recording=recording_rel,
         )
     except Exception as exc:
         duration = time.time() - t0
@@ -123,15 +147,16 @@ async def main() -> None:
         print("ERROR: OPENROUTER_API_KEY is not set")
         sys.exit(1)
 
-    model = env.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4-5")
+    model = env.get("OPENROUTER_MODEL", "openai/gpt-4o")
     llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=120)
     print(f"LLM: OpenRouter / {model}")
-    profile = BrowserProfile(
-        headless=True,
-        keep_alive=False,
-        chromium_sandbox=False,
-        args=["--no-sandbox", "--disable-dev-shm-usage"],
-    )
+
+    # Recording directory for this run
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    results_dir = RESULTS_DIR / slug
+    results_dir.mkdir(parents=True, exist_ok=True)
+    recording_dir = results_dir / "recordings" / run_id
+    recording_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[CaseResult] = []
     skipped_ids: set[str] = set()
@@ -153,16 +178,11 @@ async def main() -> None:
             skipped_ids.add(case["id"])
             continue
 
-        result = await run_case(case, llm, profile, env)
+        result = await run_case(case, llm, env, recording_dir)
         results.append(result)
 
         if not result.passed and case.get("skip_dependents_on_fail", False):
             skipped_ids.add(case["id"])
-
-    # Save results
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    results_dir = RESULTS_DIR / slug
-    results_dir.mkdir(parents=True, exist_ok=True)
 
     passed_count = sum(1 for r in results if r.passed)
     failed_count = sum(1 for r in results if not r.passed and not r.skipped)
@@ -190,7 +210,8 @@ async def main() -> None:
     for r in results:
         icon = "✓" if r.passed else ("~" if r.skipped else "✗")
         status = "PASS" if r.passed else ("SKIP" if r.skipped else "FAIL")
-        print(f"  {icon} {r.label:<32} {status}  {r.duration_s:.1f}s")
+        rec = f"  [video: {r.recording}]" if r.recording else ""
+        print(f"  {icon} {r.label:<32} {status}  {r.duration_s:.1f}s{rec}")
     print(f"\n{passed_count}/{len(results)} passed  |  {failed_count} failed  |  {skipped_count} skipped")
     print(f"Results: {result_file}")
     print("=" * 60)
