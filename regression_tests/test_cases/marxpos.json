@@ -3,6 +3,14 @@
   "description": "AllinOnePOS Full E2E Regression Tests",
   "test_cases": [
     {
+      "id": "web_register",
+      "label": "Web Portal Registration",
+      "task": "Go to http://95.111.238.19:3001 and find the registration or sign-up link/button. Complete a new user registration using a unique phone number (e.g. 07{{RANDOM_6_DIGITS}} or use 0771234999 if no variable available), a first name 'Test', last name 'User', and a password 'Test@12345'. Submit the form. Return 'SUCCESS' if registration completed or the account already exists message appears, otherwise describe exactly what went wrong including any validation errors or missing fields.",
+      "enabled": true,
+      "depends_on": null,
+      "skip_dependents_on_fail": false
+    },
+    {
       "id": "web_login",
       "label": "Web Portal Login",
       "task": "Go to http://95.111.238.19:3001 and log in using phone {{WEB_PHONE}} and password {{WEB_PASSWORD}}. Stop as soon as the authenticated dashboard or home screen is visible. Return 'SUCCESS' if login worked, otherwise describe what went wrong.",
