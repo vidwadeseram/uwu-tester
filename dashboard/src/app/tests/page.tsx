@@ -984,7 +984,9 @@ export default function TestsPage() {
   const [config, setConfig] = useState<TestConfig | null>(null);
   const [results, setResults] = useState<RunResult[]>([]);
   const [agentRuns, setAgentRuns] = useState<AgentRun[]>([]);
-  const [dismissedRunIds, setDismissedRunIds] = useState<string[]>([]);
+  const [dismissedRunIds, setDismissedRunIds] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem("dismissedAgentRunIds") ?? "[]"); } catch { return []; }
+  });
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -1317,7 +1319,7 @@ export default function TestsPage() {
       </div>
 
       {(running || runningAgentRuns.length > 0 || recentFinishedAgentRuns.length > 0) && (
-        <div className="fixed top-4 right-4 z-40 w-full max-w-sm">
+        <div className="fixed top-[60px] right-4 z-50 w-full max-w-sm">
           <div
             className="rounded-lg p-3 space-y-2"
             style={{
@@ -1360,7 +1362,11 @@ export default function TestsPage() {
                     {run.target} · {run.project} · {run.status}
                   </span>
                   <button
-                    onClick={() => setDismissedRunIds((prev) => (prev.includes(run.run_id) ? prev : [...prev, run.run_id]))}
+                    onClick={() => setDismissedRunIds((prev) => {
+                      const next = prev.includes(run.run_id) ? prev : [...prev, run.run_id];
+                      try { localStorage.setItem("dismissedAgentRunIds", JSON.stringify(next)); } catch {}
+                      return next;
+                    })}
                     className="w-5 h-5 rounded text-[10px]"
                     style={BTN(true, "#94a3b8")}
                     title="Dismiss"
