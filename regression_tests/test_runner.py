@@ -213,8 +213,14 @@ async def run_case_scripted(
             await page.wait_for_timeout(3500)
 
             html = await page.content()
-            ok = phone_filled and pass_filled and clicked and (not _has_auth_error(html))
-            return ok, ("SUCCESS" if ok else "Unable to confirm web login success")
+            auth_error = _has_auth_error(html)
+            ok = phone_filled and pass_filled and clicked and (not auth_error)
+            if ok:
+                return True, "SUCCESS"
+            return (
+                False,
+                f"web_login checks: phone_filled={phone_filled} pass_filled={pass_filled} clicked={bool(clicked)} auth_error={auth_error} url={page.url}",
+            )
 
         async def do_admin_login() -> tuple[bool, str]:
             await page.goto(admin_url, wait_until="domcontentloaded", timeout=45000)
@@ -240,8 +246,14 @@ async def run_case_scripted(
             await page.wait_for_timeout(3500)
 
             html = await page.content()
-            ok = user_filled and pass_filled and clicked and (not _has_auth_error(html))
-            return ok, ("SUCCESS" if ok else "Unable to confirm admin login success")
+            auth_error = _has_auth_error(html)
+            ok = user_filled and pass_filled and clicked and (not auth_error)
+            if ok:
+                return True, "SUCCESS"
+            return (
+                False,
+                f"admin_login checks: user_filled={user_filled} pass_filled={pass_filled} clicked={bool(clicked)} auth_error={auth_error} url={page.url}",
+            )
 
         try:
             case_id = case["id"]
