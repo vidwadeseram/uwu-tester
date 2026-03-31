@@ -43,32 +43,25 @@ if [ -n "$DOMAIN_NAME" ]; then
   SSL_EMAIL="${SSL_EMAIL:-admin@${DOMAIN_NAME}}"
 fi
 
-# LLM provider for uwu-tester regression tests
+# LLM API keys for openclaw + regression tests
 echo ""
-echo -e "${BOLD}Select LLM provider for uwu-tester regression tests:${NC}"
-echo "  1) Anthropic (Claude — recommended)"
-echo "  2) OpenAI"
-echo "  3) Skip (configure ANTHROPIC_API_KEY / OPENAI_API_KEY manually later)"
-ask "Enter choice [1-3] (default: 1):"
-read -r LLM_CHOICE
-LLM_CHOICE="${LLM_CHOICE:-1}"
+echo -e "${BOLD}LLM API Keys (openclaw uses OpenRouter first, then Anthropic/OpenAI as fallback):${NC}"
 
-ANTHROPIC_API_KEY=""
-OPENAI_API_KEY=""
+ask "Enter your OpenRouter API key (sk-or-v1-...) or press Enter to skip:"
+read -r OPENROUTER_API_KEY
+OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
 
-case "$LLM_CHOICE" in
-  1)
-    ask "Enter your Anthropic API key (sk-ant-...):"
-    read -r ANTHROPIC_API_KEY
-    ;;
-  2)
-    ask "Enter your OpenAI API key (sk-...):"
-    read -r OPENAI_API_KEY
-    ;;
-  3)
-    warn "Skipping LLM setup — set ANTHROPIC_API_KEY or OPENAI_API_KEY in the environment before running tests."
-    ;;
-esac
+ask "Enter your Anthropic API key (sk-ant-...) or press Enter to skip:"
+read -r ANTHROPIC_API_KEY
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
+
+ask "Enter your OpenAI API key (sk-...) or press Enter to skip:"
+read -r OPENAI_API_KEY
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+
+if [ -z "$OPENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
+  warn "No API keys provided — add them later via the Settings page (/settings)."
+fi
 
 echo ""
 info "Starting installation..."
@@ -226,8 +219,9 @@ set_env() {
   fi
 }
 
-[ -n "$ANTHROPIC_API_KEY" ] && set_env "ANTHROPIC_API_KEY" "$ANTHROPIC_API_KEY" "$ENV_FILE"
-[ -n "$OPENAI_API_KEY" ]    && set_env "OPENAI_API_KEY"    "$OPENAI_API_KEY"    "$ENV_FILE"
+[ -n "$OPENROUTER_API_KEY" ] && set_env "OPENROUTER_API_KEY" "$OPENROUTER_API_KEY" "$ENV_FILE"
+[ -n "$ANTHROPIC_API_KEY" ]  && set_env "ANTHROPIC_API_KEY"  "$ANTHROPIC_API_KEY"  "$ENV_FILE"
+[ -n "$OPENAI_API_KEY" ]     && set_env "OPENAI_API_KEY"     "$OPENAI_API_KEY"     "$ENV_FILE"
 
 success "Regression test environment configured."
 
@@ -312,7 +306,7 @@ Type=simple
 User=root
 WorkingDirectory=$INSTALL_DIR/openclaw
 EnvironmentFile=-$INSTALL_DIR/regression_tests/.env
-ExecStart=$(which uv 2>/dev/null || echo "$HOME/.cargo/bin/uv") run agent.py
+ExecStart=/usr/local/bin/uv run agent.py
 Restart=on-failure
 RestartSec=10
 
