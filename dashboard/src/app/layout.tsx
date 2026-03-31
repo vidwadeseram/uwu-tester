@@ -16,7 +16,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-grid min-h-screen" style={{ background: "#0a0e1a" }}>
         <Navbar />
-        <main className="pt-16">{children}</main>
+        <main className="pt-14">{children}</main>
       </body>
     </html>
   );

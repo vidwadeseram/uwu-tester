@@ -1,0 +1,93 @@
+export const dynamic = "force-dynamic";
+
+import { NextRequest, NextResponse } from "next/server";
+import { readEnvKeys } from "@/app/lib/settings";
+
+const SYSTEM = `You are openclaw, an AI assistant built into a VPS development dashboard.
+You help with coding, debugging, server management, research, and anything the developer needs.
+You have access to context about the user's VPS environment.
+For longer autonomous tasks, suggest using the Scheduler page (/scheduler).
+Be concise, direct, and practical. Use markdown for code blocks.`;
+
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+export async function POST(req: NextRequest) {
+  const { messages } = await req.json() as { messages: ChatMessage[] };
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return NextResponse.json({ error: "messages required" }, { status: 400 });
+  }
+
+  const keys = readEnvKeys();
+  const openrouterKey = keys.OPENROUTER_API_KEY;
+  const anthropicKey  = keys.ANTHROPIC_API_KEY;
+  const openaiKey     = keys.OPENAI_API_KEY;
+
+  const full: ChatMessage[] = [{ role: "system", content: SYSTEM }, ...messages];
+
+  // ── 1. OpenRouter ─────────────────────────────────────────────────────────
+  if (openrouterKey) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openrouterKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://vpsdev.local",
+          "X-Title": "openclaw",
+        },
+        body: JSON.stringify({ model: "anthropic/claude-opus-4", messages: full, max_tokens: 4096 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return NextResponse.json({ message: data.choices[0].message.content });
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── 2. Anthropic direct ───────────────────────────────────────────────────
+  if (anthropicKey) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": anthropicKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-opus-4-5-20251101",
+          max_tokens: 4096,
+          system: SYSTEM,
+          messages: messages.filter((m) => m.role !== "system"),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return NextResponse.json({ message: data.content[0].text });
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── 3. OpenAI direct ──────────────────────────────────────────────────────
+  if (openaiKey) {
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-4o", messages: full, max_tokens: 4096 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return NextResponse.json({ message: data.choices[0].message.content });
+      }
+    } catch { /* fall through */ }
+  }
+
+  return NextResponse.json(
+    { error: "No API key configured. Add one in Settings (/settings)." },
+    { status: 503 }
+  );
+}
