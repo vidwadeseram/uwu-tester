@@ -28,9 +28,8 @@ const RESULTS_DIR = path.join(REGRESSION_DIR, "results");
 const MAX_SUMMARY_BYTES = 8192;
 
 function ensureDir(dir: string) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(dir, { recursive: true });
+  try { fs.chmodSync(dir, 0o777); } catch { /* best-effort */ }
 }
 
 function projectRunsDir(project: string) {

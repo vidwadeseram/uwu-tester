@@ -361,6 +361,7 @@ interface AgentRun {
   workflow_ids: string[];
   case_ids: string[];
   exit_code?: number;
+  summary?: string;
 }
 
 /** Extract all {{VAR}} placeholders from a list of test cases */
@@ -1370,6 +1371,11 @@ export default function TestsPage() {
                 <div className="text-[11px] mt-0.5" style={{ color: "#94a3b8" }}>
                   started {formatTime(run.started_at)}
                 </div>
+                {run.status === "failed" && run.summary && (
+                  <pre className="text-[10px] mt-1 rounded p-1 overflow-x-auto whitespace-pre-wrap break-all" style={{ background: "rgba(0,0,0,0.3)", color: "#f87171", maxHeight: "8rem" }}>
+                    {run.summary.slice(-800)}
+                  </pre>
+                )}
               </div>
             ))}
           </div>
