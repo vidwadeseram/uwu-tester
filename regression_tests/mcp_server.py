@@ -1,19 +1,10 @@
 """
 uwu-tester MCP server
 
-Exposes test projects, cases, and results as MCP resources, and provides
-tools to run tests and check status. Designed for use with Claude Code and
-Opencode via stdio transport.
-
-Resources:
-  uwu://projects                          — list all projects
-  uwu://projects/{slug}/cases             — test cases JSON for a project
-  uwu://projects/{slug}/results           — recent run summaries (last 10)
-  uwu://projects/{slug}/results/{run_id}  — full results for one run
-
-Tools:
-  run_tests(project, env_vars?)           — spawn test_runner.py in background
-  get_run_status(project)                 — check if tests are running
+Lightweight stdio MCP server using the official mcp SDK.
+Exposes test projects, cases, and results as resources, and a tool
+to check run status. The "run tests" tool is intentionally omitted
+for Claude Code — Claude acts as the browser agent itself.
 
 Usage:
   uv run mcp_server.py
@@ -21,20 +12,15 @@ Usage:
 
 import json
 import os
-import subprocess
-import sys
 from pathlib import Path
 
+from mcp.server.fastmcp import FastMCP
+
 BASE_DIR = Path(__file__).parent
-# pydantic_settings (used by FastMCP) auto-reads .env from cwd.
-# Change to our own dir so it finds the right .env (not /root/.env which uwu can't access).
-os.chdir(BASE_DIR)
-
-from fastmcp import FastMCP
-
-mcp = FastMCP("uwu-tester")
 TEST_CASES_DIR = BASE_DIR / "test_cases"
 RESULTS_DIR = BASE_DIR / "results"
+
+mcp = FastMCP("uwu-tester")
 
 
 # ── Resources ─────────────────────────────────────────────────────────────────
@@ -42,14 +28,14 @@ RESULTS_DIR = BASE_DIR / "results"
 
 @mcp.resource("uwu://projects")
 def list_projects() -> str:
-    """List all available test projects (slugs)."""
+    """List all available test project slugs."""
     projects = sorted(f.stem for f in TEST_CASES_DIR.glob("*.json"))
     return json.dumps({"projects": projects}, indent=2)
 
 
 @mcp.resource("uwu://projects/{slug}/cases")
 def get_test_cases(slug: str) -> str:
-    """Get the test cases configuration for a project."""
+    """Get the full test cases config for a project."""
     cases_file = TEST_CASES_DIR / f"{slug}.json"
     if not cases_file.exists():
         raise ValueError(f"Project '{slug}' not found")
@@ -64,7 +50,7 @@ def get_results_summary(slug: str) -> str:
         return json.dumps({"project": slug, "runs": []}, indent=2)
 
     run_files = sorted(
-        [f for f in results_dir.glob("*.json") if f.stem not in ("running",)],
+        [f for f in results_dir.glob("*.json") if f.stem != "running"],
         key=lambda f: f.stem,
         reverse=True,
     )[:10]
@@ -73,16 +59,14 @@ def get_results_summary(slug: str) -> str:
     for run_file in run_files:
         try:
             data = json.loads(run_file.read_text())
-            summaries.append(
-                {
-                    "run_id": data.get("run_id"),
-                    "started_at": data.get("started_at"),
-                    "total": data.get("total"),
-                    "passed": data.get("passed"),
-                    "failed": data.get("failed"),
-                    "skipped": data.get("skipped"),
-                }
-            )
+            summaries.append({
+                "run_id": data.get("run_id"),
+                "started_at": data.get("started_at"),
+                "total": data.get("total"),
+                "passed": data.get("passed"),
+                "failed": data.get("failed"),
+                "skipped": data.get("skipped"),
+            })
         except Exception:
             pass
 
@@ -91,7 +75,7 @@ def get_results_summary(slug: str) -> str:
 
 @mcp.resource("uwu://projects/{slug}/results/{run_id}")
 def get_run_result(slug: str, run_id: str) -> str:
-    """Get full results (including per-case details) for a specific test run."""
+    """Get full per-case results for a specific test run."""
     result_file = RESULTS_DIR / slug / f"{run_id}.json"
     if not result_file.exists():
         raise ValueError(f"Run '{run_id}' not found for project '{slug}'")
@@ -102,69 +86,9 @@ def get_run_result(slug: str, run_id: str) -> str:
 
 
 @mcp.tool()
-def run_tests(project: str, env_vars: dict[str, str] | None = None) -> str:
-    """
-    Spawn the test runner for a project in the background.
-
-    Args:
-        project: The project slug (must match a file in test_cases/).
-        env_vars: Optional key=value pairs passed to the runner
-                  (e.g. {"BASE_URL": "https://example.com", "PASSWORD": "secret"}).
-
-    Returns JSON with {started, project, pid} or {error}.
-    """
-    cases_file = TEST_CASES_DIR / f"{project}.json"
-    if not cases_file.exists():
-        return json.dumps({"error": f"Project '{project}' not found"})
-
-    running_file = RESULTS_DIR / project / "running.json"
-    if running_file.exists():
-        try:
-            info = json.loads(running_file.read_text())
-            pid = info.get("pid")
-            if pid:
-                try:
-                    os.kill(pid, 0)
-                    return json.dumps({"error": f"Tests already running (pid {pid})"})
-                except (ProcessLookupError, PermissionError):
-                    running_file.unlink(missing_ok=True)
-        except Exception:
-            running_file.unlink(missing_ok=True)
-
-    # Locate uv
-    uv_candidates = [
-        "/usr/local/bin/uv",
-        "/root/.local/bin/uv",
-        "/root/.cargo/bin/uv",
-        "/home/ubuntu/.local/bin/uv",
-    ]
-    uv_bin = next((p for p in uv_candidates if Path(p).exists()), "uv")
-
-    cmd = [uv_bin, "run", "test_runner.py", project]
-    for k, v in (env_vars or {}).items():
-        cmd.append(f"{k}={v}")
-
-    extra_env = {**os.environ, "PATH": f"{os.environ.get('PATH', '')}:/usr/local/bin:/root/.local/bin"}
-    if env_vars:
-        extra_env.update(env_vars)
-
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(BASE_DIR),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        env=extra_env,
-    )
-
-    return json.dumps({"started": True, "project": project, "pid": proc.pid})
-
-
-@mcp.tool()
 def get_run_status(project: str) -> str:
     """
-    Check whether tests are currently running for a project.
-
+    Check whether a test_runner.py (Test via API) run is currently active.
     Returns JSON with {running: bool, run_id?, started_at?, pid?}.
     """
     running_file = RESULTS_DIR / project / "running.json"
@@ -179,10 +103,31 @@ def get_run_status(project: str) -> str:
                 return json.dumps({"running": True, **info})
             except (ProcessLookupError, PermissionError):
                 running_file.unlink(missing_ok=True)
-                return json.dumps({"running": False})
     except Exception:
         running_file.unlink(missing_ok=True)
     return json.dumps({"running": False})
+
+
+@mcp.tool()
+def save_results(project: str, results_json: str) -> str:
+    """
+    Save a completed test run result written by Claude Code itself.
+    results_json must be a JSON string matching the standard result format:
+    {project, run_id, started_at, total, passed, failed, skipped, results:[...]}.
+    Returns {saved: true, path} or {error}.
+    """
+    try:
+        data = json.loads(results_json)
+        run_id = data.get("run_id")
+        if not run_id:
+            return json.dumps({"error": "results_json must include a run_id field"})
+        out_dir = RESULTS_DIR / project
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / f"{run_id}.json"
+        out_file.write_text(json.dumps(data, indent=2))
+        return json.dumps({"saved": True, "path": str(out_file)})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 if __name__ == "__main__":

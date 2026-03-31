@@ -51,12 +51,16 @@ function McpModal({
   const claudeWriteConfig = `sudo -u uwu bash -c 'cd /home/uwu && claude mcp add uwu-tester -- /usr/local/bin/uwu-mcp'`;
   const opencodeWriteConfig = `sudo mkdir -p /home/uwu/.config/opencode\nsudo tee /home/uwu/.config/opencode/config.json << 'MCPEOF'\n${opencodeMcpContent}\nMCPEOF`;
 
-  const prompt = `Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case.`;
+  // Claude Code prompt: Claude IS the browser agent — no external LLM needed.
+  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. For each enabled test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+
+  // Opencode prompt: same self-executing approach
+  const opencodePrompt = `Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case.`;
 
   // Must cd /home/uwu so Claude uses the project scope where the MCP server is registered.
   // Run as uwu (non-root) so --dangerously-skip-permissions is accepted.
-  const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && claude --dangerously-skip-permissions -p "${prompt}"'`;
-  const opencodeCmd = `sudo -u uwu bash -c 'cd /home/uwu && opencode "${prompt}"'`;
+  const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && claude --dangerously-skip-permissions -p "${claudePrompt}"'`;
+  const opencodeCmd = `sudo -u uwu bash -c 'cd /home/uwu && opencode "${opencodePrompt}"'`;
 
   const isClaudeCode = target === "claude";
   const accent = isClaudeCode ? "#f97316" : "#a855f7";
