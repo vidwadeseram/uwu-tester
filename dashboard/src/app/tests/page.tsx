@@ -62,7 +62,7 @@ function McpModal({
     2
   );
 
-  const claudeCmd = `claude --mcp-config /path/to/.mcp.json "Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case."`;
+  const claudeCmd = `claude --dangerously-skip-permissions --mcp-config /path/to/.mcp.json "Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case."`;
   const opencodeCmd = `opencode "Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case."`;
 
   const isClaudeCode = target === "claude";

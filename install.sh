@@ -171,6 +171,39 @@ else
 fi
 
 ###############################################################################
+# uwu user — Claude Code refuses --dangerously-skip-permissions as root.
+# We create a non-root 'uwu' user that agents run under.
+###############################################################################
+info "Setting up 'uwu' agent user..."
+if ! id -u uwu &>/dev/null; then
+  useradd -m -s /bin/bash uwu
+  success "User 'uwu' created."
+else
+  success "User 'uwu' already exists."
+fi
+
+# Allow root to sudo as uwu without a password (SSH sessions are root)
+cat > /etc/sudoers.d/uwu-agents << 'SUDOEOF'
+# Allow root to run commands as uwu without a password
+root ALL=(uwu) NOPASSWD: ALL
+SUDOEOF
+chmod 440 /etc/sudoers.d/uwu-agents
+
+# Give uwu write access to the dirs it needs
+# (regression_tests for running/reading tests; workspaces for project files)
+mkdir -p "$INSTALL_DIR/regression_tests/results"
+chmod -R a+rX "$INSTALL_DIR"
+chmod -R a+w  "$INSTALL_DIR/regression_tests/results"
+chmod -R a+w  "$INSTALL_DIR/regression_tests/test_cases"
+chmod    a+w  "$INSTALL_DIR/settings.json" 2>/dev/null || true
+
+# Ensure opencode config dir exists for uwu
+mkdir -p /home/uwu/.config/opencode
+chown -R uwu:uwu /home/uwu/.config
+
+success "'uwu' user configured."
+
+###############################################################################
 # uv (Python package manager for regression tests)
 ###############################################################################
 if ! command -v uv &>/dev/null; then
@@ -304,10 +337,10 @@ After=network.target vps-dashboard.service
 
 [Service]
 Type=simple
-User=root
+User=uwu
 WorkingDirectory=$INSTALL_DIR/openclaw
 EnvironmentFile=-$INSTALL_DIR/regression_tests/.env
-ExecStart=/usr/local/bin/uv run agent.py
+ExecStart=/usr/local/bin/sudo -u uwu /usr/local/bin/uv run agent.py
 Restart=on-failure
 RestartSec=10
 
