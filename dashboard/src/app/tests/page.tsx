@@ -2,6 +2,197 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+// ─── MCP Modal ────────────────────────────────────────────────────────────────
+
+type McpTarget = "claude" | "opencode";
+
+function McpModal({
+  target,
+  project,
+  onClose,
+}: {
+  target: McpTarget;
+  project: string;
+  onClose: () => void;
+}) {
+  const [regressionDir, setRegressionDir] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/tests/mcp-info")
+      .then((r) => r.json())
+      .then((d) => setRegressionDir(d.regression_dir))
+      .catch(() => setRegressionDir("/opt/vps-dashboard/regression_tests"));
+  }, []);
+
+  function copy(text: string, key: string) {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(key);
+      setTimeout(() => setCopied(null), 1800);
+    });
+  }
+
+  const dir = regressionDir ?? "/opt/vps-dashboard/regression_tests";
+
+  const mcpJsonConfig = JSON.stringify(
+    {
+      mcpServers: {
+        "uwu-tester": {
+          type: "stdio",
+          command: "uv",
+          args: ["run", "mcp_server.py"],
+          cwd: dir,
+        },
+      },
+    },
+    null,
+    2
+  );
+
+  const opencodeMcpConfig = JSON.stringify(
+    {
+      mcp: {
+        "uwu-tester": {
+          command: ["uv", "run", "mcp_server.py"],
+          cwd: dir,
+        },
+      },
+    },
+    null,
+    2
+  );
+
+  const claudeCmd = `claude --mcp-config /path/to/.mcp.json "Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case."`;
+  const opencodeCmd = `opencode "Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case."`;
+
+  const isClaudeCode = target === "claude";
+  const accent = isClaudeCode ? "#f97316" : "#a855f7";
+  const title = isClaudeCode ? "Test via Claude Code" : "Test via Opencode";
+  const icon = isClaudeCode ? (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 12h8M12 8v8" />
+    </svg>
+  ) : (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" />
+    </svg>
+  );
+
+  const configBlock = isClaudeCode ? mcpJsonConfig : opencodeMcpConfig;
+  const configKey = isClaudeCode ? "Add to .mcp.json in your project root" : "Add to ~/.config/opencode/config.json";
+  const cmdKey = isClaudeCode ? "Run in terminal" : "Run in terminal";
+  const cmd = isClaudeCode ? claudeCmd : opencodeCmd;
+
+  function CodeBlock({ text, copyKey, label }: { text: string; copyKey: string; label: string }) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium" style={{ color: "#94a3b8" }}>{label}</span>
+          <button
+            onClick={() => copy(text, copyKey)}
+            className="text-xs px-2 py-0.5 rounded transition-colors"
+            style={{
+              background: copied === copyKey ? "rgba(0,255,136,0.12)" : "rgba(30,45,74,0.6)",
+              color: copied === copyKey ? "#00ff88" : "#94a3b8",
+              border: `1px solid ${copied === copyKey ? "rgba(0,255,136,0.3)" : "#1e2d4a"}`,
+            }}
+          >
+            {copied === copyKey ? "✓ Copied" : "Copy"}
+          </button>
+        </div>
+        <pre
+          className="p-3 rounded-lg text-xs overflow-x-auto"
+          style={{ background: "rgba(0,0,0,0.4)", color: "#e2e8f0", border: "1px solid #1e2d4a", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+        >
+          {text}
+        </pre>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl flex flex-col gap-4 p-5"
+        style={{ background: "#0a0e1a", border: `1px solid rgba(${hexRgb(accent)}, 0.3)`, maxHeight: "90vh", overflowY: "auto" }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span style={{ color: accent }}>{icon}</span>
+            <h2 className="text-sm font-bold" style={{ color: "#e2e8f0" }}>{title}</h2>
+          </div>
+          <button onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ color: "#4a5568", background: "rgba(30,45,74,0.4)" }}>✕</button>
+        </div>
+
+        <p className="text-xs" style={{ color: "#4a5568" }}>
+          The MCP server exposes test projects, cases, and results as resources, and lets the AI agent run tests on your behalf.
+          Follow the steps below to connect it to{" "}
+          <span style={{ color: accent }}>{isClaudeCode ? "Claude Code" : "Opencode"}</span>.
+        </p>
+
+        {/* Step 1: install deps */}
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold" style={{ color: accent }}>Step 1 — install MCP server deps</span>
+          <CodeBlock
+            text={`cd ${dir}\nuv sync`}
+            copyKey="install"
+            label="Run once in your terminal"
+          />
+        </div>
+
+        {/* Step 2: add MCP config */}
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold" style={{ color: accent }}>Step 2 — add MCP server config</span>
+          <CodeBlock text={configBlock} copyKey="config" label={configKey} />
+        </div>
+
+        {/* Step 3: prompt */}
+        <div className="flex flex-col gap-2">
+          <span className="text-xs font-semibold" style={{ color: accent }}>Step 3 — run your agent</span>
+          <CodeBlock text={cmd} copyKey="cmd" label={cmdKey} />
+        </div>
+
+        {/* Resources reference */}
+        <div className="flex flex-col gap-1.5">
+          <span className="text-xs font-semibold" style={{ color: accent }}>Available MCP resources</span>
+          <div className="p-3 rounded-lg text-xs flex flex-col gap-1" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid #1e2d4a", fontFamily: "monospace" }}>
+            {[
+              ["uwu://projects", "List all projects"],
+              [`uwu://projects/${project}/cases`, "Test cases for this project"],
+              [`uwu://projects/${project}/results`, "Recent run summaries"],
+              [`uwu://projects/${project}/results/{run_id}`, "Full result for one run"],
+            ].map(([uri, desc]) => (
+              <div key={uri} className="flex gap-2">
+                <span style={{ color: accent, minWidth: "0", flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{uri}</span>
+                <span style={{ color: "#4a5568", flexShrink: 0 }}>— {desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <button
+          onClick={onClose}
+          className="self-end px-4 py-1.5 rounded text-xs font-medium"
+          style={{ background: "rgba(30,45,74,0.6)", color: "#94a3b8", border: "1px solid #1e2d4a" }}
+        >
+          Close
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function hexRgb(hex: string) {
+  const m = hex.replace("#", "").match(/.{2}/g);
+  if (!m) return "0,0,0";
+  return m.map((x) => parseInt(x, 16)).join(",");
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface TestCase {
@@ -430,6 +621,7 @@ export default function TestsPage() {
   const [newProjectSlug, setNewProjectSlug] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
+  const [mcpModal, setMcpModal] = useState<McpTarget | null>(null);
   const [envSaving, setEnvSaving] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -799,7 +991,29 @@ export default function TestsPage() {
                           <polygon points="5 3 19 12 5 21 5 3" />
                         </svg>
                       )}
-                      {running ? "Running…" : "Run Tests"}
+                      {running ? "Running…" : "Test via API"}
+                    </button>
+
+                    <button
+                      onClick={() => setMcpModal("claude")}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium"
+                      style={BTN(true, "#f97316")}
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 9h8M8 13h5" />
+                      </svg>
+                      Test via Claude Code
+                    </button>
+
+                    <button
+                      onClick={() => setMcpModal("opencode")}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium"
+                      style={BTN(true, "#a855f7")}
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" />
+                      </svg>
+                      Test via Opencode
                     </button>
                   </div>
                 </div>
@@ -1018,7 +1232,7 @@ export default function TestsPage() {
 
                 {results.length === 0 ? (
                   <div className="card flex items-center justify-center py-10 text-xs" style={{ color: "#4a5568" }}>
-                    No runs yet — click &quot;Run Tests&quot; to start
+                    No runs yet — click &quot;Test via API&quot; to start
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1032,6 +1246,14 @@ export default function TestsPage() {
           )}
         </div>
       </div>
+
+      {mcpModal && selectedProject && (
+        <McpModal
+          target={mcpModal}
+          project={selectedProject}
+          onClose={() => setMcpModal(null)}
+        />
+      )}
     </div>
   );
 }
