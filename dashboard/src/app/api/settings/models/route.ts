@@ -12,7 +12,7 @@ export interface ORModel {
   prompt_price_per_m: number; // USD per 1M tokens
 }
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   const keys = readEnvKeys();
   const openrouterKey = keys.OPENROUTER_API_KEY;
 
