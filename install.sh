@@ -207,8 +207,19 @@ chmod -R a+w  "$INSTALL_DIR/regression_tests/test_cases"
 chmod -R a+w  "$INSTALL_DIR/openclaw/data"
 chmod    a+rw "$INSTALL_DIR/settings.json" 2>/dev/null || true
 
-# Ensure opencode config dir exists for uwu
 mkdir -p /home/uwu/.config/opencode
+cat > /home/uwu/.config/opencode/config.json << OPENCODEMCP
+{
+  "permission": "allow",
+  "mcp": {
+    "uwu-tester": {
+      "type": "local",
+      "command": ["/usr/local/bin/uwu-mcp"],
+      "enabled": true
+    }
+  }
+}
+OPENCODEMCP
 chown -R uwu:uwu /home/uwu/.config
 
 success "'uwu' user configured."

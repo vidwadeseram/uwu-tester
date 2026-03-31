@@ -42,5 +42,28 @@
       "depends_on": "admin_login",
       "skip_dependents_on_fail": false
     }
+  ],
+  "workflows": [
+    {
+      "id": "web_regression",
+      "label": "Web Regression",
+      "description": "Registration, login, and smoke checks for web portal",
+      "enabled": true,
+      "case_ids": ["web_register", "web_login", "web_smoke"]
+    },
+    {
+      "id": "admin_regression",
+      "label": "Admin Regression",
+      "description": "Admin login and smoke checks",
+      "enabled": true,
+      "case_ids": ["admin_login", "admin_smoke"]
+    },
+    {
+      "id": "full_regression",
+      "label": "Full Regression",
+      "description": "All enabled test cases",
+      "enabled": true,
+      "case_ids": ["web_register", "web_login", "web_smoke", "admin_login", "admin_smoke"]
+    }
   ]
 }

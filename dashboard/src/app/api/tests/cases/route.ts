@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
         project,
         description: "",
         test_cases: [],
+        workflows: [],
       }
     );
   }

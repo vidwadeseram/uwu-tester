@@ -17,6 +17,7 @@ Any {{PLACEHOLDER}} in task strings is substituted with matching env vars.
 """
 
 import asyncio
+import argparse
 import json
 import os
 import sys
@@ -122,15 +123,18 @@ async def run_case(
 
 
 async def main() -> None:
-    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
-        print("Usage: uv run test_runner.py <project_slug> [KEY=VALUE ...]")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("project_slug")
+    parser.add_argument("--cases", default="", help="Comma-separated case IDs to run")
+    parser.add_argument("--workflows", default="", help="Comma-separated workflow IDs to run")
+    parser.add_argument("overrides", nargs="*", help="Optional KEY=VALUE overrides")
+    args = parser.parse_args()
 
-    slug = sys.argv[1]
+    slug = args.project_slug
 
     # Parse KEY=VALUE overrides from args
     env: dict[str, str] = dict(os.environ)
-    for arg in sys.argv[2:]:
+    for arg in args.overrides:
         if "=" in arg:
             k, v = arg.split("=", 1)
             env[k] = v
@@ -144,7 +148,51 @@ async def main() -> None:
         config = json.load(f)
 
     all_cases: list[dict] = config.get("test_cases", [])
+    all_workflows: list[dict] = config.get("workflows", [])
+
+    case_by_id = {tc.get("id", ""): tc for tc in all_cases if tc.get("id")}
+    workflow_by_id = {wf.get("id", ""): wf for wf in all_workflows if wf.get("id")}
+
+    selected_case_ids = {
+        c.strip() for c in args.cases.split(",") if c.strip()
+    }
+    selected_workflow_ids = {
+        w.strip() for w in args.workflows.split(",") if w.strip()
+    }
+
+    requested_case_ids: set[str] = set(selected_case_ids)
+    for wf_id in selected_workflow_ids:
+        wf = workflow_by_id.get(wf_id)
+        if not wf:
+            print(f"WARN: Unknown workflow '{wf_id}'")
+            continue
+        for cid in wf.get("case_ids", []):
+            if isinstance(cid, str) and cid:
+                requested_case_ids.add(cid)
+
+    def include_with_dependencies(case_id: str, acc: set[str], visiting: set[str]) -> None:
+        if case_id in acc:
+            return
+        if case_id in visiting:
+            return
+        case = case_by_id.get(case_id)
+        if not case:
+            return
+        visiting.add(case_id)
+        dep = case.get("depends_on")
+        if isinstance(dep, str) and dep:
+            include_with_dependencies(dep, acc, visiting)
+        visiting.remove(case_id)
+        acc.add(case_id)
+
+    final_case_ids: set[str] = set()
+    if requested_case_ids:
+        for case_id in requested_case_ids:
+            include_with_dependencies(case_id, final_case_ids, set())
+
     enabled_cases = [tc for tc in all_cases if tc.get("enabled", True)]
+    if final_case_ids:
+        enabled_cases = [tc for tc in enabled_cases if tc.get("id") in final_case_ids]
 
     if not enabled_cases:
         print("No enabled test cases found.")
@@ -226,6 +274,8 @@ async def main() -> None:
         "project": slug,
         "run_id": run_id,
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "selected_workflows": sorted(selected_workflow_ids),
+        "selected_cases": sorted(selected_case_ids),
         "total": len(results),
         "passed": passed_count,
         "failed": failed_count,

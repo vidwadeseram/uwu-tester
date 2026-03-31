@@ -4,19 +4,30 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 // ─── MCP Modal ────────────────────────────────────────────────────────────────
 
-type McpTarget = "claude" | "opencode";
+type McpTarget = "claude" | "opencode" | "api";
+
+type RunSelectionMode = "all" | "workflows" | "cases";
 
 function McpModal({
   target,
   project,
+  runMode,
+  selectedWorkflowIds,
+  selectedCaseIds,
   onClose,
 }: {
   target: McpTarget;
   project: string;
+  runMode: RunSelectionMode;
+  selectedWorkflowIds: string[];
+  selectedCaseIds: string[];
   onClose: () => void;
 }) {
   const [regressionDir, setRegressionDir] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoOutput, setAutoOutput] = useState("");
+  const [autoError, setAutoError] = useState("");
 
   useEffect(() => {
     fetch("/api/tests/mcp-info")
@@ -34,12 +45,25 @@ function McpModal({
 
   const dir = regressionDir ?? "/opt/vps-dashboard/regression_tests";
 
+  const scopeInstruction =
+    runMode === "workflows" && selectedWorkflowIds.length > 0
+      ? `Run only workflows: ${selectedWorkflowIds.join(", ")}. Include required dependencies.`
+      : runMode === "cases" && selectedCaseIds.length > 0
+      ? `Run only case IDs: ${selectedCaseIds.join(", ")}. Include required dependencies.`
+      : runMode === "workflows"
+      ? "No workflows selected. Return an error without executing tests."
+      : runMode === "cases"
+      ? "No case IDs selected. Return an error without executing tests."
+      : "Run all enabled test cases.";
+
   const opencodeMcpContent = JSON.stringify(
     {
+      permission: "allow",
       mcp: {
         "uwu-tester": {
-          command: ["/usr/local/bin/uv", "run", "mcp_server.py"],
-          cwd: dir,
+          type: "local",
+          command: ["/usr/local/bin/uwu-mcp"],
+          enabled: true,
         },
       },
     },
@@ -52,22 +76,28 @@ function McpModal({
   const opencodeWriteConfig = `sudo mkdir -p /home/uwu/.config/opencode\nsudo tee /home/uwu/.config/opencode/config.json << 'MCPEOF'\n${opencodeMcpContent}\nMCPEOF`;
 
   // Claude Code prompt: Claude IS the browser agent — no external LLM needed.
-  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. For each enabled test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Opencode prompt: same self-executing approach
-  const opencodePrompt = `Use the uwu-tester MCP server to run tests for the '${project}' project, then give me a detailed pass/fail report for each test case.`;
+  const opencodePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool and do NOT run test_runner.py. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Must cd /home/uwu so Claude uses the project scope where the MCP server is registered.
   // Run as uwu (non-root) so --dangerously-skip-permissions is accepted.
   const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && claude --dangerously-skip-permissions -p "${claudePrompt}"'`;
-  const opencodeCmd = `sudo -u uwu opencode run --dir /home/uwu "${opencodePrompt}"`;
+  const opencodeCmd = `sudo -u uwu opencode run --dir ${dir} "${opencodePrompt}"`;
 
   const isClaudeCode = target === "claude";
-  const accent = isClaudeCode ? "#f97316" : "#a855f7";
-  const title = isClaudeCode ? "Test via Claude Code" : "Test via Opencode";
+  const isApi = target === "api";
+  const accent = isClaudeCode ? "#f97316" : isApi ? "#00ff88" : "#a855f7";
+  const title = isClaudeCode ? "Test via Claude Code" : isApi ? "Test via API" : "Test via Opencode";
   const icon = isClaudeCode ? (
     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 12h8M12 8v8" />
+    </svg>
+  ) : isApi ? (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="20 6 9 17 4 12" />
+      <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
     </svg>
   ) : (
     <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -75,10 +105,98 @@ function McpModal({
     </svg>
   );
 
-  const configBlock = isClaudeCode ? claudeWriteConfig : opencodeWriteConfig;
-  const configKey = isClaudeCode ? "Run once to register the MCP server" : "Run once to create opencode config";
+  const configBlock = isClaudeCode
+    ? claudeWriteConfig
+    : isApi
+    ? "No MCP setup required for API mode"
+    : opencodeWriteConfig;
+  const configKey = isClaudeCode
+    ? "Run once to register the MCP server"
+    : isApi
+    ? "Optional"
+    : "Run once to create opencode config";
   const cmdKey = isClaudeCode ? "Run in terminal (as root)" : "Run in terminal (as root)";
-  const cmd = isClaudeCode ? claudeCmd : opencodeCmd;
+  const cmd = isClaudeCode
+    ? claudeCmd
+    : isApi
+    ? `curl -s -X POST http://127.0.0.1:${process.env.NEXT_PUBLIC_DASHBOARD_PORT ?? "3000"}/api/tests/run?project=${project}`
+    : opencodeCmd;
+
+  async function handleAutoRun() {
+    if (runMode === "workflows" && selectedWorkflowIds.length === 0) {
+      setAutoError("Select at least one workflow first.");
+      return;
+    }
+    if (runMode === "cases" && selectedCaseIds.length === 0) {
+      setAutoError("Select at least one case first.");
+      return;
+    }
+    setAutoRunning(true);
+    setAutoError("");
+    setAutoOutput("");
+    try {
+      const res = isApi
+        ? await fetch(`/api/tests/run?project=${encodeURIComponent(project)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              workflow_ids: runMode === "workflows" ? selectedWorkflowIds : [],
+              case_ids: runMode === "cases" ? selectedCaseIds : [],
+            }),
+          })
+        : await fetch("/api/tests/agent-run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              target,
+              project,
+              workflow_ids: runMode === "workflows" ? selectedWorkflowIds : [],
+              case_ids: runMode === "cases" ? selectedCaseIds : [],
+            }),
+          });
+      const data = await res.json();
+      if (!res.ok) {
+        setAutoError(data.error ?? "Failed to start auto run");
+      } else {
+        if (isApi) {
+          const runId = String(data.run_id ?? "");
+          setAutoOutput(`Run started: ${runId || "unknown"}. Waiting for completion...`);
+
+          let done = false;
+          for (let i = 0; i < 120; i += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            const statusRes = await fetch(`/api/tests/run?project=${encodeURIComponent(project)}`);
+            if (!statusRes.ok) continue;
+            const status = await statusRes.json();
+            if (!status.running) {
+              done = true;
+              break;
+            }
+          }
+
+          if (!done) {
+            setAutoError("Run is still in progress. Refresh recent runs in the main page.");
+          } else {
+            const resultsRes = await fetch(`/api/tests/results?project=${encodeURIComponent(project)}&limit=1`);
+            if (!resultsRes.ok) {
+              setAutoError("Run completed but failed to load latest result.");
+            } else {
+              const latest = await resultsRes.json();
+              const run = latest.results?.[0];
+              setAutoOutput(run ? JSON.stringify(run, null, 2) : "Run completed with no result payload.");
+            }
+          }
+        } else {
+          setAutoOutput(data.output ?? "");
+          if (!data.success) setAutoError(`Command failed (exit ${data.exitCode})`);
+        }
+      }
+    } catch {
+      setAutoError("Network error while running agent");
+    } finally {
+      setAutoRunning(false);
+    }
+  }
 
   function CodeBlock({ text, copyKey, label }: { text: string; copyKey: string; label: string }) {
     return (
@@ -129,47 +247,73 @@ function McpModal({
         <p className="text-xs" style={{ color: "#4a5568" }}>
           The MCP server exposes test projects, cases, and results as resources, and lets the AI agent run tests on your behalf.
           Follow the steps below to connect it to{" "}
-          <span style={{ color: accent }}>{isClaudeCode ? "Claude Code" : "Opencode"}</span>.
+          <span style={{ color: accent }}>{isClaudeCode ? "Claude Code" : isApi ? "API runner" : "Opencode"}</span>.
         </p>
 
-        {/* Step 1: install deps */}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold" style={{ color: accent }}>Step 1 — install MCP server deps</span>
-          <CodeBlock
-            text={`cd ${dir}\nuv sync`}
-            copyKey="install"
-            label="Run once in your terminal"
-          />
-        </div>
+        {!isApi && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold" style={{ color: accent }}>Step 1 — install MCP server deps</span>
+            <CodeBlock
+              text={`cd ${dir}\nuv sync`}
+              copyKey="install"
+              label="Run once in your terminal"
+            />
+          </div>
+        )}
 
-        {/* Step 2: add MCP config */}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold" style={{ color: accent }}>Step 2 — add MCP server config</span>
-          <CodeBlock text={configBlock} copyKey="config" label={configKey} />
-        </div>
+        {!isApi && (
+          <div className="flex flex-col gap-2">
+            <span className="text-xs font-semibold" style={{ color: accent }}>Step 2 — add MCP server config</span>
+            <CodeBlock text={configBlock} copyKey="config" label={configKey} />
+          </div>
+        )}
 
-        {/* Step 3: prompt */}
         <div className="flex flex-col gap-2">
-          <span className="text-xs font-semibold" style={{ color: accent }}>Step 3 — run your agent</span>
+          <span className="text-xs font-semibold" style={{ color: accent }}>{isApi ? "Run command" : "Step 3 — run your agent"}</span>
           <CodeBlock text={cmd} copyKey="cmd" label={cmdKey} />
         </div>
 
-        {/* Resources reference */}
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-semibold" style={{ color: accent }}>Available MCP resources</span>
-          <div className="p-3 rounded-lg text-xs flex flex-col gap-1" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid #1e2d4a", fontFamily: "monospace" }}>
-            {[
-              ["uwu://projects", "List all projects"],
-              [`uwu://projects/${project}/cases`, "Test cases for this project"],
-              [`uwu://projects/${project}/results`, "Recent run summaries"],
-              [`uwu://projects/${project}/results/{run_id}`, "Full result for one run"],
-            ].map(([uri, desc]) => (
-              <div key={uri} className="flex gap-2">
-                <span style={{ color: accent, minWidth: "0", flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{uri}</span>
-                <span style={{ color: "#4a5568", flexShrink: 0 }}>— {desc}</span>
-              </div>
-            ))}
+        {!isApi && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs font-semibold" style={{ color: accent }}>Available MCP resources</span>
+            <div className="p-3 rounded-lg text-xs flex flex-col gap-1" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid #1e2d4a", fontFamily: "monospace" }}>
+              {[
+                ["uwu://projects", "List all projects"],
+                [`uwu://projects/${project}/cases`, "Test cases for this project"],
+                [`uwu://projects/${project}/results`, "Recent run summaries"],
+                [`uwu://projects/${project}/results/{run_id}`, "Full result for one run"],
+              ].map(([uri, desc]) => (
+                <div key={uri} className="flex gap-2">
+                  <span style={{ color: accent, minWidth: "0", flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{uri}</span>
+                  <span style={{ color: "#4a5568", flexShrink: 0 }}>— {desc}</span>
+                </div>
+              ))}
+            </div>
           </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleAutoRun}
+            disabled={autoRunning}
+            className="px-3 py-1.5 rounded text-xs font-medium"
+            style={BTN(!autoRunning, accent)}
+          >
+            {autoRunning ? "Auto-running…" : "Auto Run Now"}
+          </button>
+          {autoError && (
+            <div className="text-xs px-2 py-1 rounded" style={{ background: "rgba(255,68,68,0.1)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}>
+              {autoError}
+            </div>
+          )}
+          {autoOutput && (
+            <pre
+              className="p-3 rounded-lg text-xs overflow-x-auto"
+              style={{ background: "rgba(0,0,0,0.4)", color: "#e2e8f0", border: "1px solid #1e2d4a", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 240, overflowY: "auto" }}
+            >
+              {autoOutput}
+            </pre>
+          )}
         </div>
 
         <button
@@ -201,10 +345,19 @@ interface TestCase {
   skip_dependents_on_fail?: boolean;
 }
 
+interface Workflow {
+  id: string;
+  label: string;
+  description?: string;
+  enabled: boolean;
+  case_ids: string[];
+}
+
 interface TestConfig {
   project: string;
   description: string;
   test_cases: TestCase[];
+  workflows: Workflow[];
 }
 
 interface CaseResult {
@@ -241,6 +394,59 @@ function extractVars(testCases: TestCase[]): string[] {
 
 function isSensitive(key: string) {
   return /PASSWORD|SECRET|TOKEN|KEY|PASS/i.test(key);
+}
+
+function normalizeConfig(raw: Partial<TestConfig>): TestConfig {
+  const testCases = Array.isArray(raw.test_cases) ? raw.test_cases : [];
+  const workflows = Array.isArray(raw.workflows) ? raw.workflows : [];
+  return {
+    project: raw.project ?? "",
+    description: raw.description ?? "",
+    test_cases: testCases,
+    workflows,
+  };
+}
+
+function resolveRunCaseIds(
+  config: TestConfig | null,
+  mode: RunSelectionMode,
+  selectedWorkflowIds: string[],
+  selectedCaseIds: string[]
+): string[] {
+  if (!config) return [];
+  const caseById = new Map(config.test_cases.map((tc) => [tc.id, tc]));
+  const requested = new Set<string>();
+
+  if (mode === "workflows") {
+    const workflowSet = new Set(selectedWorkflowIds);
+    for (const wf of config.workflows) {
+      if (!workflowSet.has(wf.id)) continue;
+      for (const caseId of wf.case_ids) requested.add(caseId);
+    }
+  } else if (mode === "cases") {
+    for (const caseId of selectedCaseIds) requested.add(caseId);
+  } else {
+    for (const tc of config.test_cases) {
+      if (tc.enabled) requested.add(tc.id);
+    }
+  }
+
+  const resolved = new Set<string>();
+  const walk = (caseId: string, seen: Set<string>) => {
+    if (resolved.has(caseId) || seen.has(caseId)) return;
+    const tc = caseById.get(caseId);
+    if (!tc) return;
+    seen.add(caseId);
+    if (tc.depends_on) walk(tc.depends_on, seen);
+    resolved.add(caseId);
+  };
+
+  requested.forEach((caseId) => {
+    walk(caseId, new Set());
+  });
+  return config.test_cases
+    .map((tc) => tc.id)
+    .filter((caseId) => resolved.has(caseId));
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -445,6 +651,127 @@ function CaseEditor({
   );
 }
 
+function WorkflowEditor({
+  initial,
+  cases,
+  onSave,
+  onCancel,
+}: {
+  initial: Partial<Workflow>;
+  cases: TestCase[];
+  onSave: (wf: Workflow) => void;
+  onCancel: () => void;
+}) {
+  const [id, setId] = useState(initial.id ?? "");
+  const [label, setLabel] = useState(initial.label ?? "");
+  const [description, setDescription] = useState(initial.description ?? "");
+  const [enabled, setEnabled] = useState(initial.enabled ?? true);
+  const [caseIds, setCaseIds] = useState<string[]>(initial.case_ids ?? []);
+  const [error, setError] = useState("");
+  const isNew = !initial.id;
+
+  const toggleCase = (caseId: string) => {
+    setCaseIds((prev) =>
+      prev.includes(caseId) ? prev.filter((v) => v !== caseId) : [...prev, caseId]
+    );
+  };
+
+  const handleSave = () => {
+    if (!id.trim()) {
+      setError("ID is required");
+      return;
+    }
+    if (!label.trim()) {
+      setError("Label is required");
+      return;
+    }
+    if (caseIds.length === 0) {
+      setError("Select at least one test case");
+      return;
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+      setError("ID must be alphanumeric / _ -");
+      return;
+    }
+    onSave({
+      id: id.trim(),
+      label: label.trim(),
+      description: description.trim(),
+      enabled,
+      case_ids: caseIds,
+    });
+  };
+
+  return (
+    <div
+      className="rounded p-4 space-y-3"
+      style={{ background: "rgba(30,45,74,0.4)", border: "1px solid rgba(168,85,247,0.2)" }}
+    >
+      <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#a855f7" }}>
+        {isNew ? "New Workflow" : "Edit Workflow"}
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <input
+          className="px-3 py-1.5 rounded text-xs outline-none"
+          style={INPUT_STYLE}
+          value={label}
+          onChange={(e) => {
+            setLabel(e.target.value);
+            if (isNew) setId(slugify(e.target.value));
+          }}
+          placeholder="Full regression"
+        />
+        <input
+          className="px-3 py-1.5 rounded text-xs font-mono outline-none"
+          style={INPUT_STYLE}
+          value={id}
+          onChange={(e) => setId(e.target.value)}
+          placeholder="full_regression"
+          disabled={!isNew}
+        />
+      </div>
+
+      <input
+        className="px-3 py-1.5 rounded text-xs outline-none"
+        style={INPUT_STYLE}
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Optional workflow description"
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-2 rounded" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.5)" }}>
+        {cases.map((tc) => (
+          <label key={tc.id} className="flex items-center gap-2 text-xs" style={{ color: "#94a3b8" }}>
+            <input
+              type="checkbox"
+              checked={caseIds.includes(tc.id)}
+              onChange={() => toggleCase(tc.id)}
+            />
+            <span className="font-mono">{tc.id}</span>
+          </label>
+        ))}
+      </div>
+
+      <label className="flex items-center gap-2 text-xs" style={{ color: "#94a3b8" }}>
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+        Enabled
+      </label>
+
+      {error && (
+        <div className="text-xs px-2 py-1 rounded" style={{ background: "rgba(255,68,68,0.1)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}>
+          {error}
+        </div>
+      )}
+
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-3 py-1.5 rounded text-xs" style={BTN(true, "#94a3b8")}>Cancel</button>
+        <button onClick={handleSave} className="px-3 py-1.5 rounded text-xs font-medium" style={BTN(true, "#a855f7")}>Save</button>
+      </div>
+    </div>
+  );
+}
+
 function VideoModal({ src, label, onClose }: { src: string; label: string; onClose: () => void }) {
   return (
     <div
@@ -611,15 +938,19 @@ export default function TestsPage() {
   const [results, setResults] = useState<RunResult[]>([]);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
-  const [runError, setRunError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [editingCase, setEditingCase] = useState<Partial<TestCase> | null>(null);
+  const [editingWorkflow, setEditingWorkflow] = useState<Partial<Workflow> | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
+  const [showNewWorkflowForm, setShowNewWorkflowForm] = useState(false);
   const [newProjectSlug, setNewProjectSlug] = useState("");
   const [showNewProject, setShowNewProject] = useState(false);
   const [envVars, setEnvVars] = useState<Record<string, string>>({});
   const [mcpModal, setMcpModal] = useState<McpTarget | null>(null);
   const [envSaving, setEnvSaving] = useState(false);
+  const [runMode, setRunMode] = useState<RunSelectionMode>("all");
+  const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([]);
+  const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load project list
@@ -639,7 +970,11 @@ export default function TestsPage() {
     const res = await fetch(`/api/tests/cases?project=${encodeURIComponent(slug)}`);
     if (res.ok) {
       const data = await res.json();
-      setConfig(data);
+      const normalized = normalizeConfig(data);
+      setConfig(normalized);
+      setSelectedWorkflowIds(normalized.workflows.filter((wf) => wf.enabled).map((wf) => wf.id));
+      setSelectedCaseIds(normalized.test_cases.filter((tc) => tc.enabled).map((tc) => tc.id));
+      setRunMode("all");
     }
   }, []);
 
@@ -693,7 +1028,9 @@ export default function TestsPage() {
     loadResults(selectedProject);
     loadEnvVars(selectedProject);
     setEditingCase(null);
+    setEditingWorkflow(null);
     setShowNewForm(false);
+    setShowNewWorkflowForm(false);
     // Re-attach polling if a run is already in progress (survives page refresh)
     fetch(`/api/tests/run?project=${encodeURIComponent(selectedProject)}`)
       .then((r) => r.json())
@@ -775,25 +1112,43 @@ export default function TestsPage() {
     saveConfig(updated);
   };
 
-  const handleRun = async () => {
-    if (!selectedProject || running) return;
-    setRunError("");
-    setRunning(true);
+  const handleAddWorkflow = (wf: Workflow) => {
+    if (!config) return;
+    const updated = { ...config, workflows: [...config.workflows, wf] };
+    setConfig(updated);
+    saveConfig(updated);
+    setShowNewWorkflowForm(false);
+  };
 
-    const res = await fetch(`/api/tests/run?project=${encodeURIComponent(selectedProject)}`, {
-      method: "POST",
-    });
+  const handleEditWorkflow = (wf: Workflow) => {
+    if (!config) return;
+    const updated = {
+      ...config,
+      workflows: config.workflows.map((w) => (w.id === wf.id ? wf : w)),
+    };
+    setConfig(updated);
+    saveConfig(updated);
+    setEditingWorkflow(null);
+  };
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setRunError(data.error ?? "Failed to start tests");
-      setRunning(false);
-      return;
-    }
+  const handleDeleteWorkflow = (id: string) => {
+    if (!config) return;
+    const updated = { ...config, workflows: config.workflows.filter((w) => w.id !== id) };
+    setConfig(updated);
+    saveConfig(updated);
+    setSelectedWorkflowIds((prev) => prev.filter((wid) => wid !== id));
+  };
 
-    // Poll every 5s
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(() => pollRunStatus(selectedProject), 5000);
+  const handleToggleWorkflowEnabled = (id: string) => {
+    if (!config) return;
+    const updated = {
+      ...config,
+      workflows: config.workflows.map((w) =>
+        w.id === id ? { ...w, enabled: !w.enabled } : w
+      ),
+    };
+    setConfig(updated);
+    saveConfig(updated);
   };
 
   const handleCreateProject = async () => {
@@ -803,6 +1158,7 @@ export default function TestsPage() {
       project: slug,
       description: newProjectSlug,
       test_cases: [],
+      workflows: [],
     };
     await fetch(`/api/tests/cases?project=${encodeURIComponent(slug)}`, {
       method: "PUT",
@@ -816,6 +1172,7 @@ export default function TestsPage() {
   };
 
   const allCaseIds = config?.test_cases.map((c) => c.id) ?? [];
+  const resolvedRunCaseIds = resolveRunCaseIds(config, runMode, selectedWorkflowIds, selectedCaseIds);
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
@@ -931,6 +1288,132 @@ export default function TestsPage() {
             </div>
           ) : (
             <>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                      Workflows
+                    </span>
+                    <span className="badge" style={{ background: "rgba(168,85,247,0.1)", color: "#a855f7", border: "1px solid rgba(168,85,247,0.2)" }}>
+                      {config?.workflows.length ?? 0}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setShowNewWorkflowForm(true);
+                      setEditingWorkflow(null);
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium"
+                    style={BTN(true, "#a855f7")}
+                  >
+                    + Add Workflow
+                  </button>
+                </div>
+
+                {showNewWorkflowForm && !editingWorkflow && config && (
+                  <WorkflowEditor
+                    initial={{}}
+                    cases={config.test_cases}
+                    onSave={handleAddWorkflow}
+                    onCancel={() => setShowNewWorkflowForm(false)}
+                  />
+                )}
+
+                {config && config.workflows.length > 0 && (
+                  <div className="space-y-2">
+                    {config.workflows.map((wf) =>
+                      editingWorkflow?.id === wf.id ? (
+                        <WorkflowEditor
+                          key={wf.id}
+                          initial={wf}
+                          cases={config.test_cases}
+                          onSave={handleEditWorkflow}
+                          onCancel={() => setEditingWorkflow(null)}
+                        />
+                      ) : (
+                        <div key={wf.id} className="flex items-start gap-3 px-3 py-2.5 rounded" style={{ background: "rgba(30,45,74,0.3)", border: "1px solid rgba(30,45,74,0.5)" }}>
+                          <button
+                            onClick={() => handleToggleWorkflowEnabled(wf.id)}
+                            className="mt-0.5 flex-shrink-0 w-4 h-4 rounded flex items-center justify-center"
+                            style={{
+                              background: wf.enabled ? "rgba(0,255,136,0.15)" : "rgba(30,45,74,0.5)",
+                              border: `1px solid ${wf.enabled ? "rgba(0,255,136,0.3)" : "rgba(30,45,74,0.8)"}`,
+                            }}
+                          >
+                            {wf.enabled && <span className="text-[10px]" style={{ color: "#00ff88" }}>✓</span>}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium" style={{ color: "#e2e8f0" }}>{wf.label}</span>
+                              <span className="font-mono text-xs badge" style={{ background: "rgba(30,45,74,0.6)", color: "#94a3b8", border: "none" }}>{wf.id}</span>
+                              <span className="text-xs" style={{ color: "#4a5568" }}>{wf.case_ids.length} cases</span>
+                            </div>
+                            {wf.description && <p className="text-xs mt-0.5" style={{ color: "#4a5568" }}>{wf.description}</p>}
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0">
+                            <button onClick={() => setEditingWorkflow(wf)} className="w-6 h-6 rounded" style={BTN(true, "#a855f7")}>Edit</button>
+                            <button onClick={() => { if (confirm(`Delete workflow \"${wf.label}\"?`)) handleDeleteWorkflow(wf.id); }} className="w-6 h-6 rounded" style={BTN(true, "#ff4444")}>×</button>
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                  Run Scope
+                </span>
+                <div className="grid sm:grid-cols-3 gap-2">
+                  <button onClick={() => setRunMode("all")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "all", "#00ff88")}>All enabled cases</button>
+                  <button onClick={() => setRunMode("workflows")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "workflows", "#a855f7")}>Selected workflows</button>
+                  <button onClick={() => setRunMode("cases")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "cases", "#00d4ff")}>Selected cases</button>
+                </div>
+
+                {runMode === "workflows" && config && (
+                  <div className="flex flex-wrap gap-2">
+                    {config.workflows.map((wf) => (
+                      <button
+                        key={wf.id}
+                        onClick={() =>
+                          setSelectedWorkflowIds((prev) =>
+                            prev.includes(wf.id) ? prev.filter((v) => v !== wf.id) : [...prev, wf.id]
+                          )
+                        }
+                        className="px-2 py-1 rounded text-xs font-mono"
+                        style={BTN(selectedWorkflowIds.includes(wf.id), "#a855f7")}
+                      >
+                        {wf.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {runMode === "cases" && config && (
+                  <div className="flex flex-wrap gap-2">
+                    {config.test_cases.map((tc) => (
+                      <button
+                        key={tc.id}
+                        onClick={() =>
+                          setSelectedCaseIds((prev) =>
+                            prev.includes(tc.id) ? prev.filter((v) => v !== tc.id) : [...prev, tc.id]
+                          )
+                        }
+                        className="px-2 py-1 rounded text-xs font-mono"
+                        style={BTN(selectedCaseIds.includes(tc.id), "#00d4ff")}
+                      >
+                        {tc.id}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-xs" style={{ color: "#4a5568" }}>
+                  Effective run order: {resolvedRunCaseIds.length > 0 ? resolvedRunCaseIds.join(" → ") : "None selected"}
+                </p>
+              </div>
+
               {/* ── Test Cases ── */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -974,21 +1457,14 @@ export default function TestsPage() {
                     </button>
 
                     <button
-                      onClick={handleRun}
-                      disabled={running}
+                      onClick={() => setMcpModal("api")}
                       className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium"
-                      style={BTN(!running, "#00ff88")}
+                      style={BTN(true, "#00ff88")}
                     >
-                      {running ? (
-                        <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 12a9 9 0 1 1-9-9" />
-                        </svg>
-                      ) : (
-                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polygon points="5 3 19 12 5 21 5 3" />
-                        </svg>
-                      )}
-                      {running ? "Running…" : "Test via API"}
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polygon points="5 3 19 12 5 21 5 3" />
+                      </svg>
+                      Test via API
                     </button>
 
                     <button
@@ -1014,12 +1490,6 @@ export default function TestsPage() {
                     </button>
                   </div>
                 </div>
-
-                {runError && (
-                  <div className="text-xs px-2 py-1 rounded" style={{ background: "rgba(255,68,68,0.1)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}>
-                    {runError}
-                  </div>
-                )}
 
                 {running && (
                   <div className="text-xs px-3 py-2 rounded flex items-center gap-2" style={{ background: "rgba(0,255,136,0.05)", border: "1px solid rgba(0,255,136,0.15)", color: "#00ff88" }}>
@@ -1248,6 +1718,9 @@ export default function TestsPage() {
         <McpModal
           target={mcpModal}
           project={selectedProject}
+          runMode={runMode}
+          selectedWorkflowIds={selectedWorkflowIds}
+          selectedCaseIds={resolvedRunCaseIds}
           onClose={() => setMcpModal(null)}
         />
       )}

@@ -38,6 +38,14 @@ function runningFile(project: string) {
   return path.join(RESULTS_DIR, project, "running.json");
 }
 
+function parseSelection(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .map((v) => v.trim())
+    .filter((v) => /^[a-zA-Z0-9_-]+$/.test(v));
+}
+
 /** Check if the PID stored in the lock file is actually still running */
 function isPidAlive(pid: number): boolean {
   try {
@@ -88,10 +96,29 @@ export async function POST(req: NextRequest) {
 
   const runId = new Date().toISOString().replace(/[:.]/g, "").replace("Z", "Z");
 
+  let body: unknown = {};
+  try {
+    body = await req.json();
+  } catch {
+    body = {};
+  }
+
+  const parsed = (body ?? {}) as Record<string, unknown>;
+  const workflowIds = parseSelection(parsed.workflow_ids);
+  const caseIds = parseSelection(parsed.case_ids);
+
   const projectEnv = loadProjectEnv(project);
   const uvBin = findUv();
   const logFd = fs.openSync(path.join(projectResultsDir, "last_run.log"), "w");
-  const proc = spawn(uvBin, ["run", "test_runner.py", project], {
+  const args = ["run", "test_runner.py", project];
+  if (workflowIds.length > 0) {
+    args.push("--workflows", workflowIds.join(","));
+  }
+  if (caseIds.length > 0) {
+    args.push("--cases", caseIds.join(","));
+  }
+
+  const proc = spawn(uvBin, args, {
     cwd: REGRESSION_DIR,
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -105,14 +132,25 @@ export async function POST(req: NextRequest) {
   // Write lock file with PID so we can verify process is still alive later
   fs.writeFileSync(
     lockFile,
-    JSON.stringify({ run_id: runId, started_at: new Date().toISOString(), pid: proc.pid })
+    JSON.stringify({
+      run_id: runId,
+      started_at: new Date().toISOString(),
+      pid: proc.pid,
+      workflow_ids: workflowIds,
+      case_ids: caseIds,
+    })
   );
 
   proc.on("exit", () => fs.rmSync(lockFile, { force: true }));
   proc.on("error", () => fs.rmSync(lockFile, { force: true }));
   proc.unref();
 
-  return NextResponse.json({ run_id: runId, status: "started" });
+  return NextResponse.json({
+    run_id: runId,
+    status: "started",
+    workflow_ids: workflowIds,
+    case_ids: caseIds,
+  });
 }
 
 /** GET /api/tests/run?project=slug  — check if tests are currently running */

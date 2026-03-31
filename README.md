@@ -113,6 +113,15 @@ Test cases are JSON files, one per project:
       "depends_on": null,
       "skip_dependents_on_fail": true
     }
+  ],
+  "workflows": [
+    {
+      "id": "smoke",
+      "label": "Smoke",
+      "description": "Core login smoke path",
+      "enabled": true,
+      "case_ids": ["login"]
+    }
   ]
 }
 ```
@@ -124,6 +133,12 @@ Run manually:
 ```bash
 cd /opt/vps-dashboard/regression_tests
 uv run test_runner.py myapp
+
+# Only selected workflows
+uv run test_runner.py myapp --workflows smoke
+
+# Only selected cases (dependencies auto-included)
+uv run test_runner.py myapp --cases login
 ```
 
 ## Scheduler
