@@ -170,8 +170,8 @@ async def main() -> None:
         pass
 
     if openrouter_key:
-        model = saved_tests_model or env.get("OPENROUTER_MODEL", "anthropic/claude-3-5-haiku")
-        llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=120)
+        model = saved_tests_model or env.get("OPENROUTER_MODEL", "google/gemma-3-4b-it:free")
+        llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=180)
         llm_label = f"OpenRouter / {model}"
     elif anthropic_key:
         llm = ChatAnthropic(model="claude-3-5-haiku-20241022", api_key=anthropic_key, timeout=120, max_tokens=8096)
