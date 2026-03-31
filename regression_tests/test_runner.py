@@ -234,11 +234,21 @@ async def main() -> None:
         pass
 
     if openrouter_key:
-        fallback_model = env.get("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
-        model = saved_tests_model or env.get("OPENROUTER_MODEL", fallback_model)
+        model = saved_tests_model or env.get("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
         if isinstance(model, str) and model.startswith("google/gemma-"):
-            print(f"WARN: OpenRouter model '{model}' is incompatible with current browser-use prompt format; using fallback '{fallback_model}'")
-            model = fallback_model
+            from browser_use.llm.openrouter.serializer import OpenRouterMessageSerializer
+
+            original_serialize = OpenRouterMessageSerializer.serialize_messages
+
+            def patched_serialize(messages):
+                serialized = original_serialize(messages)
+                for item in serialized:
+                    if isinstance(item, dict) and item.get("role") == "system":
+                        item["role"] = "user"
+                return serialized
+
+            OpenRouterMessageSerializer.serialize_messages = staticmethod(patched_serialize)
+            print(f"INFO: Enabled Gemma compatibility mode for {model} (system -> user role remap)")
         llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=180)
         llm_label = f"OpenRouter / {model}"
     elif anthropic_key:
