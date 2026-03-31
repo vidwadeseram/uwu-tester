@@ -184,8 +184,8 @@ function ApiKeysSection({ authed }: { authed: boolean }) {
 
 function CredentialsSection({ authState, onAuthChange }: { authState: AuthState; onAuthChange: () => void }) {
   const [username, setUsername]         = useState("");
-  const [password, setPassword]         = useState("");
-  const [confirm, setConfirm]           = useState("");
+  const [newPwd, setNewPwd]         = useState("");
+  const [confirmPwd, setConfirmPwd]     = useState("");
   const [currentPwd, setCurrentPwd]     = useState("");
   const [saving, setSaving]             = useState(false);
   const [message, setMessage]           = useState("");
@@ -194,19 +194,19 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (password !== confirm) { setError("Passwords don't match"); return; }
-    if (password.length < 6)  { setError("Password must be ≥ 6 characters"); return; }
+    if (newPwd !== confirmPwd) { setError("Passwords don't match"); return; }
+    if (newPwd.length < 6)  { setError("Password must be ≥ 6 characters"); return; }
     setSaving(true); setError(""); setMessage("");
     try {
       const res = await fetch("/api/settings/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, currentPassword: authState.authEnabled ? currentPwd : undefined }),
+        body: JSON.stringify({ username, password: newPwd, currentPassword: authState.authEnabled ? currentPwd : undefined }),
       });
       const data = await res.json();
       if (res.ok) {
         setMessage("Credentials saved. Please log in again.");
-        setPassword(""); setConfirm(""); setCurrentPwd("");
+        setNewPwd(""); setConfirmPwd(""); setCurrentPwd("");
         onAuthChange();
         setTimeout(() => router.push("/login"), 1500);
       } else {
@@ -282,8 +282,8 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
             <input
               type="password"
               autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              value={newPwd}
+              onChange={(e) => setNewPwd(e.target.value)}
               required
               placeholder="≥ 6 characters"
               style={INPUT}
@@ -294,8 +294,8 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
             <input
               type="password"
               autoComplete="new-password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
+              value={confirmPwd}
+              onChange={(e) => setConfirmPwd(e.target.value)}
               required
               placeholder="Repeat password"
               style={INPUT}
