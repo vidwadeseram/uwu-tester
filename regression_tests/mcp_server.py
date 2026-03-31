@@ -27,10 +27,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
-mcp = FastMCP(
-    "uwu-tester",
-    description="Browser-use regression test manager for uwu-tester projects",
-)
+mcp = FastMCP("uwu-tester")
 
 BASE_DIR = Path(__file__).parent
 TEST_CASES_DIR = BASE_DIR / "test_cases"
