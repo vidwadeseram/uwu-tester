@@ -177,7 +177,10 @@ function buildApiPayload(input: {
 
 function buildCurlCommand(payload: string): string {
   const port = process.env.NEXT_PUBLIC_DASHBOARD_PORT ?? process.env.PORT ?? "3000";
-  return `curl -sS -X POST http://127.0.0.1:${port}/api/discoverer -H 'Content-Type: application/json' -d ${shellQuote(payload)}`;
+  const secret = process.env.AUTH_SECRET?.trim() ?? "";
+  const headers = [`-H 'Content-Type: application/json'`];
+  if (secret) headers.push(`-H ${shellQuote(`x-internal-secret: ${secret}`)}`);
+  return `curl -sS -X POST http://127.0.0.1:${port}/api/discoverer ${headers.join(" ")} -d ${shellQuote(payload)}`;
 }
 
 function buildAgentPrompt(curlCmd: string, input: { project: string; workspacePath: string }) {
