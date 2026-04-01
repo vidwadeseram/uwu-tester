@@ -55,6 +55,7 @@ interface DiscovererResponse {
       reusedWorkflowIds: string[];
     };
     generationModel?: string;
+    generationWarning?: string;
   };
 }
 
@@ -683,6 +684,9 @@ export default function DiscovererPage() {
             )}
             {result.persisted.generationModel && (
               <div>Generated with model: {result.persisted.generationModel}</div>
+            )}
+            {result.persisted.generationWarning && (
+              <div style={{ color: "#fbbf24" }}>Generation fallback: {result.persisted.generationWarning}</div>
             )}
           </div>
 

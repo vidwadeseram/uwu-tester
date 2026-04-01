@@ -3,6 +3,8 @@ import fs from "fs";
 import path from "path";
 import {
   allowedWorkspaceRoots,
+  buildAgentDocs,
+  buildTestConfigFromContext,
   collectWorkspaceContext,
   DiscovererCase,
   DiscovererMergeReport,
@@ -336,6 +338,7 @@ export async function POST(req: NextRequest) {
   let generatedTestConfig: DiscovererTestConfig;
   let agentDocs: string;
   let generationModel = "";
+  let generationWarning = "";
 
   try {
     const generated = await generateWithModel(project, context);
@@ -344,7 +347,10 @@ export async function POST(req: NextRequest) {
     generationModel = generated.model;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Discoverer generation failed";
-    return NextResponse.json({ error: message }, { status: 503 });
+    generatedTestConfig = buildTestConfigFromContext(project, context);
+    agentDocs = buildAgentDocs(project, context);
+    generationModel = "fallback/local-context";
+    generationWarning = `${message}. Used local workspace fallback generation.`;
   }
 
   let effectiveTestConfig = generatedTestConfig;
@@ -418,6 +424,7 @@ export async function POST(req: NextRequest) {
       docsMode,
       testsMerge,
       generationModel,
+      generationWarning: generationWarning || undefined,
     },
   });
 }

@@ -116,7 +116,10 @@ function extractResponse(absPath: string): unknown {
   }
 }
 
-function responseIssue(value: unknown): string | null {
+function responseIssue(
+  value: unknown,
+  expected: { persistTests: boolean; persistDocs: boolean },
+): string | null {
   if (!value || typeof value !== "object") {
     return "No JSON response was produced by Discoverer.";
   }
@@ -134,6 +137,21 @@ function responseIssue(value: unknown): string | null {
     return "Discoverer response missing persisted output details.";
   }
 
+  const persisted = row.persisted as Record<string, unknown>;
+  if (expected.persistTests) {
+    const testFile = typeof persisted.testCasesFile === "string" ? persisted.testCasesFile.trim() : "";
+    if (!testFile) {
+      return "Discoverer response missing saved tests path while tests persistence is enabled.";
+    }
+  }
+
+  if (expected.persistDocs) {
+    const docsFile = typeof persisted.knowledgeFile === "string" ? persisted.knowledgeFile.trim() : "";
+    if (!docsFile) {
+      return "Discoverer response missing saved docs path while docs persistence is enabled.";
+    }
+  }
+
   return null;
 }
 
@@ -149,7 +167,9 @@ function refreshMeta(meta: DiscoverRun): DiscoverRun {
     const parsedCode = Number(raw);
     const code = Number.isFinite(parsedCode) ? parsedCode : 1;
     const response = extractResponse(responseAbs);
-    const issue = code === 0 ? responseIssue(response) : null;
+    const issue = code === 0
+      ? responseIssue(response, { persistTests: meta.persistTests, persistDocs: meta.persistDocs })
+      : null;
     const summary = readLogSummary(logAbs);
     const updated: DiscoverRun = {
       ...meta,
