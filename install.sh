@@ -106,19 +106,29 @@ success "System packages installed."
 install_nvim() {
   local arch
   arch=$(uname -m)
-  local tarball
+  local tarball_candidates=""
   case "$arch" in
-    x86_64)  tarball="nvim-linux-x86_64.tar.gz" ;;
-    aarch64) tarball="nvim-linux-arm64.tar.gz"   ;;
-    *)       warn "Unsupported arch $arch — skipping neovim install"; return ;;
+    x86_64)  tarball_candidates="nvim-linux-x86_64.tar.gz nvim-linux64.tar.gz" ;;
+    aarch64) tarball_candidates="nvim-linux-arm64.tar.gz" ;;
+    *)
+      warn "Unsupported arch $arch — falling back to apt neovim"
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq neovim >/dev/null 2>&1 || true
+      return
+      ;;
   esac
   local latest_url
-  latest_url=$(curl -s https://api.github.com/repos/neovim/neovim/releases/latest \
-    | grep '"browser_download_url"' \
-    | grep "\"${tarball}\"" \
-    | head -1 | cut -d'"' -f4)
+  local releases_json
+  releases_json=$(curl -s https://api.github.com/repos/neovim/neovim/releases/latest)
+  for tarball in $tarball_candidates; do
+    latest_url=$(printf '%s' "$releases_json" \
+      | grep '"browser_download_url"' \
+      | grep "\"${tarball}\"" \
+      | head -1 | cut -d'"' -f4 || true)
+    [ -n "$latest_url" ] && break
+  done
   if [ -z "$latest_url" ]; then
-    warn "Could not determine Neovim download URL — skipping"
+    warn "Could not determine Neovim download URL — falling back to apt neovim"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq neovim >/dev/null 2>&1 || true
     return
   fi
   info "Downloading Neovim from $latest_url..."
@@ -132,7 +142,11 @@ install_nvim() {
 
 if ! nvim --version 2>/dev/null | head -1 | grep -qE 'v0\.(9|1[0-9])'; then
   install_nvim
-  success "Neovim $(/usr/local/bin/nvim --version | head -1) installed."
+  if command -v nvim &>/dev/null; then
+    success "Neovim $(nvim --version | head -1) installed."
+  else
+    warn "Neovim installation skipped (command unavailable)."
+  fi
 else
   success "Neovim $(nvim --version | head -1) already up to date."
 fi
@@ -160,7 +174,19 @@ if ! command -v ttyd &>/dev/null; then
   chmod +x /usr/local/bin/ttyd
   success "ttyd ${TTYD_VER} installed."
 else
-  success "ttyd already installed."
+success "ttyd already installed."
+fi
+
+###############################################################################
+# uwu user — Claude Code refuses --dangerously-skip-permissions as root.
+# We create a non-root 'uwu' user that agents run under.
+###############################################################################
+info "Setting up 'uwu' agent user..."
+if ! id -u uwu &>/dev/null; then
+  useradd -m -s /bin/bash uwu
+  success "User 'uwu' created."
+else
+  success "User 'uwu' already exists."
 fi
 
 ###############################################################################
@@ -175,30 +201,28 @@ else
   git clone --depth=1 "https://github.com/vidwadeseram/dotfiles.git" "$DOTFILES_DIR" -q
 fi
 
-# Stow nvim + tmux for root (the ttyd terminal runs as root)
 cd "$DOTFILES_DIR"
-for pkg in nvim tmux; do
+for pkg in nvim tmux claude opencode; do
   [ -d "$pkg" ] || continue
   stow --restow --target="/root" "$pkg" 2>/dev/null || \
     stow --target="/root" "$pkg" 2>/dev/null || true
 done
 
-# Stow nvim + tmux for uwu (agent user)
 mkdir -p /home/uwu/.config
-for pkg in nvim tmux; do
+for pkg in nvim tmux claude opencode; do
   [ -d "$pkg" ] || continue
   stow --restow --target="/home/uwu" "$pkg" 2>/dev/null || \
     stow --target="/home/uwu" "$pkg" 2>/dev/null || true
 done
-chown -R uwu:uwu /home/uwu/.config
+chown -R uwu:uwu /home/uwu
 cd -
 
 # Pre-bootstrap LazyVim plugins headlessly so nvim is ready on first open
 info "Bootstrapping Neovim plugins (LazyVim)..."
-nvim --headless "+Lazy! sync" +qa 2>/dev/null || \
-  HOME=/root nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+timeout 300 nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || \
+  timeout 300 HOME=/root nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
 # Also bootstrap for uwu
-sudo -u uwu HOME=/home/uwu nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+timeout 300 sudo -u uwu HOME=/home/uwu nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
 
 success "Dotfiles applied and Neovim plugins installed."
 
@@ -224,27 +248,50 @@ fi
 ###############################################################################
 # OpenCode
 ###############################################################################
+install_opencode_binary() {
+  local candidate
+  for candidate in \
+    /usr/lib/node_modules/opencode-linux-x64/bin/opencode \
+    /usr/lib/node_modules/opencode-linux-x64-baseline/bin/opencode \
+    /usr/lib/node_modules/opencode-linux-x64-musl/bin/opencode \
+    /usr/lib/node_modules/opencode-linux-x64-baseline-musl/bin/opencode \
+    /usr/lib/node_modules/opencode-ai/bin/.opencode \
+    /root/.opencode/bin/opencode; do
+    if [ -x "$candidate" ]; then
+      install -m 755 "$candidate" /usr/local/bin/opencode
+      return 0
+    fi
+  done
+  return 1
+}
+
 if ! command -v opencode &>/dev/null; then
   info "Installing OpenCode..."
   curl -fsSL https://opencode.ai/install | sh >/dev/null 2>&1 || \
-    npm install -g opencode-ai >/dev/null 2>&1 || true
+    npm install -g opencode-ai >/dev/null 2>&1 || \
+    npm install -g @opencode-ai/cli >/dev/null 2>&1 || \
+    npm install -g @opencode-ai/opencode >/dev/null 2>&1 || true
   success "OpenCode installed (if supported on this arch)."
 else
   success "OpenCode already installed."
 fi
 
-###############################################################################
-# uwu user — Claude Code refuses --dangerously-skip-permissions as root.
-# We create a non-root 'uwu' user that agents run under.
-###############################################################################
-info "Setting up 'uwu' agent user..."
-if ! id -u uwu &>/dev/null; then
-  useradd -m -s /bin/bash uwu
-  success "User 'uwu' created."
-else
-  success "User 'uwu' already exists."
+if ! opencode --version >/dev/null 2>&1; then
+  npm install -g opencode-linux-x64 >/dev/null 2>&1 || true
+  npm install -g opencode-linux-x64-baseline >/dev/null 2>&1 || true
+  npm install -g opencode-linux-x64-musl >/dev/null 2>&1 || true
+  npm install -g opencode-linux-x64-baseline-musl >/dev/null 2>&1 || true
 fi
 
+install_opencode_binary || true
+
+if opencode --version >/dev/null 2>&1; then
+  success "OpenCode $(opencode --version | head -1) ready."
+else
+  warn "OpenCode installed but version check failed."
+fi
+
+###############################################################################
 # Allow root to sudo as uwu without a password (SSH sessions are root)
 cat > /etc/sudoers.d/uwu-agents << 'SUDOEOF'
 # Allow root to run commands as uwu without a password
@@ -341,6 +388,10 @@ if [ -d "$INSTALL_DIR/.git" ]; then
   info "Repo exists, pulling latest..."
   git -C "$INSTALL_DIR" pull -q
 else
+  if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null | wc -l)" -gt 0 ]; then
+    warn "$INSTALL_DIR exists without git metadata — resetting directory"
+    rm -rf "$INSTALL_DIR"
+  fi
   git clone "$REPO_URL" "$INSTALL_DIR" -q
 fi
 success "Repo ready."
@@ -403,6 +454,15 @@ success "Firewall configured."
 # Systemd — dashboard
 ###############################################################################
 info "Creating systemd services..."
+AUTH_SECRET_DIR="/etc/uwu-code"
+AUTH_SECRET_FILE="$AUTH_SECRET_DIR/auth_secret"
+mkdir -p "$AUTH_SECRET_DIR"
+if [ ! -s "$AUTH_SECRET_FILE" ]; then
+  openssl rand -hex 32 > "$AUTH_SECRET_FILE"
+  chmod 600 "$AUTH_SECRET_FILE"
+fi
+AUTH_SECRET=$(cat "$AUTH_SECRET_FILE")
+
 cat > /etc/systemd/system/vps-dashboard.service << EOF
 [Unit]
 Description=uwu-code
@@ -414,6 +474,7 @@ User=root
 WorkingDirectory=$INSTALL_DIR/dashboard
 Environment=NODE_ENV=production
 Environment=PORT=$DASHBOARD_PORT
+Environment=AUTH_SECRET=$AUTH_SECRET
 ExecStart=/usr/bin/npm run start
 Restart=on-failure
 RestartSec=5
@@ -423,6 +484,7 @@ WantedBy=multi-user.target
 EOF
 
 mkdir -p /opt/workspaces
+TTYD_BIN="$(command -v ttyd || echo /usr/bin/ttyd)"
 cat > /etc/systemd/system/vps-ttyd.service << EOF
 [Unit]
 Description=uwu-code Browser Terminal (ttyd)
@@ -432,7 +494,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/workspaces
-ExecStart=/usr/local/bin/ttyd --port $TERMINAL_PORT --writable bash -c 'cd /opt/workspaces && exec bash'
+ExecStart=$TTYD_BIN --port $TERMINAL_PORT --writable /bin/bash -l
 Restart=on-failure
 RestartSec=5
 
@@ -500,13 +562,32 @@ server {
         proxy_cache_bypass \$http_upgrade;
     }
 
+    location = /_terminal_auth_check {
+        internal;
+        proxy_pass http://127.0.0.1:$DASHBOARD_PORT/api/auth/check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie \$http_cookie;
+        proxy_set_header X-Original-URI \$request_uri;
+    }
+
+    location = /terminal {
+        return 302 /terminal/;
+    }
+
     location /terminal/ {
+        auth_request /_terminal_auth_check;
+        error_page 401 = @terminal_login;
         proxy_pass http://127.0.0.1:$TERMINAL_PORT/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "Upgrade";
         proxy_set_header Host \$host;
         proxy_read_timeout 86400;
+    }
+
+    location @terminal_login {
+        return 302 /login?next=/terminal/;
     }
 }
 EOF
@@ -538,13 +619,32 @@ server {
         proxy_set_header Host \$host;
     }
 
+    location = /_terminal_auth_check {
+        internal;
+        proxy_pass http://127.0.0.1:$DASHBOARD_PORT/api/auth/check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie \$http_cookie;
+        proxy_set_header X-Original-URI \$request_uri;
+    }
+
+    location = /terminal {
+        return 302 /terminal/;
+    }
+
     location /terminal/ {
+        auth_request /_terminal_auth_check;
+        error_page 401 = @terminal_login;
         proxy_pass http://127.0.0.1:$TERMINAL_PORT/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "Upgrade";
         proxy_set_header Host \$host;
         proxy_read_timeout 86400;
+    }
+
+    location @terminal_login {
+        return 302 /login?next=/terminal/;
     }
 }
 EOF
