@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# uwu-tester - VPS Dev Dashboard installer
-# Usage: curl -sSL https://raw.githubusercontent.com/vidwadeseram/uwu-tester/main/install.sh | sudo bash
+# uwu-code installer
+# Usage: curl -sSL https://raw.githubusercontent.com/vidwadeseram/uwu-code/main/install.sh | sudo bash
 set -euo pipefail
 
 ###############################################################################
 # Config defaults (override via env vars)
 ###############################################################################
-REPO_URL="https://github.com/vidwadeseram/uwu-tester.git"
+REPO_URL="https://github.com/vidwadeseram/uwu-code.git"
 INSTALL_DIR="${INSTALL_DIR:-/opt/vps-dashboard}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
 TERMINAL_PORT="${TERMINAL_PORT:-7681}"
@@ -27,7 +27,7 @@ require_root
 ###############################################################################
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║           uwu-tester VPS Dev Dashboard               ║${NC}"
+echo -e "${GREEN}║                    uwu-code                          ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -91,14 +91,51 @@ apt-get update -qq
 
 info "Installing system dependencies..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  curl wget git tmux neovim build-essential \
+  curl wget git tmux build-essential \
   ufw net-tools iproute2 \
   nginx certbot python3-certbot-nginx \
   cmake libjson-c-dev libwebsockets-dev \
   ca-certificates gnupg python3-pip stow \
-  ffmpeg 2>/dev/null || true
+  ffmpeg ripgrep fd-find 2>/dev/null || true
 
 success "System packages installed."
+
+###############################################################################
+# Neovim (latest stable — LazyVim requires >= 0.9, apt version is too old)
+###############################################################################
+install_nvim() {
+  local arch
+  arch=$(uname -m)
+  local tarball
+  case "$arch" in
+    x86_64)  tarball="nvim-linux-x86_64.tar.gz" ;;
+    aarch64) tarball="nvim-linux-arm64.tar.gz"   ;;
+    *)       warn "Unsupported arch $arch — skipping neovim install"; return ;;
+  esac
+  local latest_url
+  latest_url=$(curl -s https://api.github.com/repos/neovim/neovim/releases/latest \
+    | grep '"browser_download_url"' \
+    | grep "\"${tarball}\"" \
+    | head -1 | cut -d'"' -f4)
+  if [ -z "$latest_url" ]; then
+    warn "Could not determine Neovim download URL — skipping"
+    return
+  fi
+  info "Downloading Neovim from $latest_url..."
+  curl -fsSL "$latest_url" -o /tmp/nvim.tar.gz
+  rm -rf /opt/nvim
+  mkdir -p /opt/nvim
+  tar -C /opt/nvim -xzf /tmp/nvim.tar.gz --strip-components=1
+  rm /tmp/nvim.tar.gz
+  ln -sf /opt/nvim/bin/nvim /usr/local/bin/nvim
+}
+
+if ! nvim --version 2>/dev/null | head -1 | grep -qE 'v0\.(9|1[0-9])'; then
+  install_nvim
+  success "Neovim $(/usr/local/bin/nvim --version | head -1) installed."
+else
+  success "Neovim $(nvim --version | head -1) already up to date."
+fi
 
 ###############################################################################
 # Node.js
@@ -127,9 +164,9 @@ else
 fi
 
 ###############################################################################
-# Dotfiles (neovim, tmux, shell configs from vidwadeseram/dotfiles)
+# Dotfiles (neovim + tmux configs from vidwadeseram/dotfiles via stow)
 ###############################################################################
-DOTFILES_DIR="$HOME/.dotfiles"
+DOTFILES_DIR="/root/.dotfiles"
 if [ -d "$DOTFILES_DIR/.git" ]; then
   info "Dotfiles already cloned, pulling latest..."
   git -C "$DOTFILES_DIR" pull -q
@@ -137,15 +174,33 @@ else
   info "Cloning dotfiles..."
   git clone --depth=1 "https://github.com/vidwadeseram/dotfiles.git" "$DOTFILES_DIR" -q
 fi
-# Apply dotfiles with stow (symlink all packages into $HOME)
+
+# Stow nvim + tmux for root (the ttyd terminal runs as root)
 cd "$DOTFILES_DIR"
-for pkg in */; do
-  pkg="${pkg%/}"
-  [ -f "$pkg/.stow-skip" ] && continue
-  stow --restow --target="$HOME" "$pkg" 2>/dev/null || true
+for pkg in nvim tmux; do
+  [ -d "$pkg" ] || continue
+  stow --restow --target="/root" "$pkg" 2>/dev/null || \
+    stow --target="/root" "$pkg" 2>/dev/null || true
 done
+
+# Stow nvim + tmux for uwu (agent user)
+mkdir -p /home/uwu/.config
+for pkg in nvim tmux; do
+  [ -d "$pkg" ] || continue
+  stow --restow --target="/home/uwu" "$pkg" 2>/dev/null || \
+    stow --target="/home/uwu" "$pkg" 2>/dev/null || true
+done
+chown -R uwu:uwu /home/uwu/.config
 cd -
-success "Dotfiles applied."
+
+# Pre-bootstrap LazyVim plugins headlessly so nvim is ready on first open
+info "Bootstrapping Neovim plugins (LazyVim)..."
+nvim --headless "+Lazy! sync" +qa 2>/dev/null || \
+  HOME=/root nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+# Also bootstrap for uwu
+sudo -u uwu HOME=/home/uwu nvim --headless "+Lazy! sync" +qa 2>/dev/null || true
+
+success "Dotfiles applied and Neovim plugins installed."
 
 ###############################################################################
 # Claude Code CLI
@@ -212,7 +267,7 @@ cat > /home/uwu/.config/opencode/config.json << OPENCODEMCP
 {
   "permission": "allow",
   "mcp": {
-    "uwu-tester": {
+    "uwu-code": {
       "type": "local",
       "command": ["/usr/local/bin/uwu-mcp"],
       "enabled": true
@@ -276,7 +331,7 @@ chmod 755 /usr/local/bin/uwu-mcp
 
 # Register the MCP server in uwu's claude config (project: /home/uwu)
 # so 'cd /home/uwu && claude ...' can find it without extra setup.
-sudo -u uwu bash -c 'cd /home/uwu && claude mcp remove uwu-tester 2>/dev/null; claude mcp add uwu-tester -- /usr/local/bin/uwu-mcp' || true
+sudo -u uwu bash -c 'cd /home/uwu && claude mcp remove uwu-code 2>/dev/null; claude mcp add uwu-code -- /usr/local/bin/uwu-mcp' || true
 
 ###############################################################################
 # Clone / update repo
@@ -350,7 +405,7 @@ success "Firewall configured."
 info "Creating systemd services..."
 cat > /etc/systemd/system/vps-dashboard.service << EOF
 [Unit]
-Description=uwu-tester VPS Dev Dashboard
+Description=uwu-code
 After=network.target
 
 [Service]
@@ -370,7 +425,7 @@ EOF
 mkdir -p /opt/workspaces
 cat > /etc/systemd/system/vps-ttyd.service << EOF
 [Unit]
-Description=uwu-tester Browser Terminal (ttyd)
+Description=uwu-code Browser Terminal (ttyd)
 After=network.target
 
 [Service]
@@ -507,7 +562,7 @@ success "Nginx configured."
 ###############################################################################
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         uwu-tester — Installation Complete           ║${NC}"
+echo -e "${GREEN}║          uwu-code — Installation Complete            ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  Dashboard:  ${CYAN}${DASHBOARD_URL}${NC}"

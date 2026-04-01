@@ -1,4 +1,4 @@
-# uwu-tester
+# uwu-code
 
 A web-based VPS development dashboard with an autonomous AI task agent, browser-use regression testing, and real-time server monitoring.
 
@@ -7,7 +7,7 @@ A web-based VPS development dashboard with an autonomous AI task agent, browser-
 | Page | What it does |
 |---|---|
 | **Dashboard** `/` | System stats, tmux sessions, port tracker, expose ports, projects panel |
-| **uwu-tester** `/tests` | Per-project browser-use E2E regression tests with editor, run history, and video recordings |
+| **uwu-code** `/tests` | Per-project browser-use E2E regression tests with editor, run history, and video recordings |
 | **Scheduler** `/scheduler` | Queue coding and research tasks for openclaw to work on autonomously |
 | **OpenClaw** `/openclaw` | Live monitor for the openclaw agent — status, current task, activity log |
 | **Settings** `/settings` | Manage API keys and set a login password for the dashboard |
@@ -34,7 +34,7 @@ openclaw runs as a background daemon, picks up tasks from the Scheduler, and com
 Run on your VPS as root:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/vidwadeseram/uwu-tester/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/vidwadeseram/uwu-code/main/install.sh | sudo bash
 ```
 
 The installer prompts for:
@@ -96,7 +96,7 @@ cd /opt/vps-dashboard && git pull && cd dashboard && npm ci && npm run build
 systemctl restart vps-dashboard vps-openclaw
 ```
 
-## uwu-tester regression tests
+## uwu-code regression tests
 
 Test cases are JSON files, one per project:
 

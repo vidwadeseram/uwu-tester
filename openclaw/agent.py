@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-openclaw — autonomous task agent for uwu-tester
+openclaw — autonomous task agent for uwu-code
 Polls data/tasks.json every 10s.
 - coding tasks  → opencode or claude CLI in the workspace
 - research tasks → Anthropic / OpenAI / OpenRouter API directly

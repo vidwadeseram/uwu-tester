@@ -1,5 +1,5 @@
 """
-uwu-tester MCP server — minimal stdlib-only implementation
+uwu-code MCP server — minimal stdlib-only implementation
 
 Zero external dependencies. Starts in <200ms (vs 1.5s+ with fastmcp/mcp SDKs).
 Speaks JSON-RPC 2.0 over stdout with newline-delimited messages.
@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).parent
 TEST_CASES_DIR = BASE_DIR / "test_cases"
 RESULTS_DIR = BASE_DIR / "results"
 
-SERVER_INFO = {"name": "uwu-tester", "version": "1.0.0"}
+SERVER_INFO = {"name": "uwu-code", "version": "1.0.0"}
 PROTOCOL_VERSION = "2024-11-05"
 
 TOOLS = [
