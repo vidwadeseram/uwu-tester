@@ -492,6 +492,7 @@ function ModelsSection() {
   const [models, setModels] = useState<ORModel[]>([]);
   const [testsModel, setTestsModel] = useState("openrouter/free");
   const [openclawModel, setOpenclawModel] = useState("openrouter/free");
+  const [discovererModel, setDiscovererModel] = useState("openrouter/free");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -504,6 +505,7 @@ function ModelsSection() {
         setModels(d.models ?? []);
         if (d.selected?.tests) setTestsModel(d.selected.tests);
         if (d.selected?.openclaw) setOpenclawModel(d.selected.openclaw);
+        if (d.selected?.discoverer) setDiscovererModel(d.selected.discoverer);
         if (d.error) setError(d.error);
       })
       .catch(() => setError("Failed to load models"))
@@ -516,7 +518,7 @@ function ModelsSection() {
       const res = await fetch("/api/settings/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tests: testsModel, openclaw: openclawModel }),
+        body: JSON.stringify({ tests: testsModel, openclaw: openclawModel, discoverer: discovererModel }),
       });
       if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 3000); }
       else { const d = await res.json(); setError(d.error ?? "Save failed"); }
@@ -561,6 +563,13 @@ function ModelsSection() {
           label="OpenClaw (research & chat)"
           value={openclawModel}
           onChange={setOpenclawModel}
+          models={models}
+          loading={loading}
+        />
+        <ModelPicker
+          label="Discoverer (workspace generation)"
+          value={discovererModel}
+          onChange={setDiscovererModel}
           models={models}
           loading={loading}
         />

@@ -14,6 +14,7 @@ export interface Settings {
   models?: {
     tests?: string;
     openclaw?: string;
+    discoverer?: string;
   };
 }
 

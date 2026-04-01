@@ -141,8 +141,8 @@ install_nvim() {
 }
 
 NVIM_MIN_MAJOR=0
-NVIM_MIN_MINOR=11
-NVIM_MIN_PATCH=2
+NVIM_MIN_MINOR=12
+NVIM_MIN_PATCH=0
 
 nvim_version_ok() {
   command -v nvim &>/dev/null || return 1

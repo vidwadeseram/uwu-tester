@@ -71,6 +71,7 @@ interface DiscovererResponse {
       reusedCaseIds: string[];
       reusedWorkflowIds: string[];
     };
+    generationModel?: string;
   };
 }
 
@@ -462,6 +463,9 @@ export default function DiscovererPage() {
               <div>
                 Saved docs ({result.persisted.docsMode ?? "created"}): {result.persisted.knowledgeFile}
               </div>
+            )}
+            {result.persisted.generationModel && (
+              <div>Generated with model: {result.persisted.generationModel}</div>
             )}
           </div>
 

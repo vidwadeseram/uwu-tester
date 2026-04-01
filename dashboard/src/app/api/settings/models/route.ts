@@ -76,7 +76,11 @@ export async function GET(_req: NextRequest) {
   const settings = readSettings();
   return NextResponse.json({
     models,
-    selected: settings.models ?? { tests: "openrouter/free", openclaw: "openrouter/free" },
+    selected: {
+      tests: settings.models?.tests ?? "openrouter/free",
+      openclaw: settings.models?.openclaw ?? "openrouter/free",
+      discoverer: settings.models?.discoverer ?? "openrouter/free",
+    },
     error: error || undefined,
   });
 }
@@ -84,13 +88,14 @@ export async function GET(_req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!(await checkAuth(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { tests, openclaw } = await req.json() as { tests?: string; openclaw?: string };
+  const { tests, openclaw, discoverer } = await req.json() as { tests?: string; openclaw?: string; discoverer?: string };
   const settings = readSettings();
   writeSettings({
     ...settings,
     models: {
       tests: tests ?? settings.models?.tests ?? "openrouter/free",
       openclaw: openclaw ?? settings.models?.openclaw ?? "openrouter/free",
+      discoverer: discoverer ?? settings.models?.discoverer ?? "openrouter/free",
     },
   });
   return NextResponse.json({ ok: true });
