@@ -141,15 +141,20 @@ function buildScopeInstruction(workflowIds: string[], caseIds: string[]): string
   return "Run all enabled test cases.";
 }
 
-function buildPrompt(project: string, workflowIds: string[], caseIds: string[]): string {
+function buildPrompt(project: string, runId: string, workflowIds: string[], caseIds: string[]): string {
   const scope = buildScopeInstruction(workflowIds, caseIds);
   return [
     `Read the test cases for project '${project}' from MCP resource uwu://projects/${project}/cases.`,
     scope,
+    `Use this exact run_id for all saved output: ${runId}.`,
     "Do NOT run test_runner.py and do NOT call any run_tests tool.",
     "Execute cases yourself as a browser agent using Playwright from /opt/vps-dashboard/regression_tests/.venv/bin/python.",
-    "For every case, capture a recording and keep artifacts under results/<project>/recordings/manual/<run_id>/<case_id>/.",
-    "After all cases, call save_results tool with full details and include recording path for each case.",
+    "IMPORTANT browser interaction rules:",
+    "(a) For checkboxes always use locator.check() — never .click() or .evaluate('e => e.click()') as the app is React-based and requires proper change events.",
+    "(b) After any form submission wait at least 3 seconds before checking the result.",
+    "(c) If the page URL stays on signup/register after submitting but 'verifications' appears in localStorage (even as 'undefined') or no error text is visible, treat registration as SUCCESS — this app triggers phone OTP verification server-side without a page redirect.",
+    `For every case, capture a recording and keep artifacts under results/${project}/recordings/manual/${runId}/<case_id>/.`,
+    `After all cases, call save_results tool with full details and set run_id to ${runId}. Include recording path for each case.`,
     "Finally return a detailed pass/fail report for each case.",
   ].join(" ");
 }
@@ -220,7 +225,7 @@ export async function POST(req: NextRequest) {
     exit_file: exitRelative,
   };
 
-  const prompt = buildPrompt(project, workflowIds, caseIds);
+  const prompt = buildPrompt(project, runId, workflowIds, caseIds);
   const pid = spawnBackgroundRun(meta, prompt);
   const withPid = { ...meta, pid };
   saveMeta(withPid);

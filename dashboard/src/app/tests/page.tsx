@@ -62,7 +62,7 @@ function McpModal({
     {
       permission: "allow",
       mcp: {
-        "uwu-tester": {
+        "uwu-code": {
           type: "local",
           command: ["/usr/local/bin/uwu-mcp"],
           enabled: true,
@@ -74,14 +74,14 @@ function McpModal({
   );
 
   // Step 2: one-time setup — register MCP server in uwu's claude config
-  const claudeWriteConfig = `sudo -u uwu bash -c 'cd /home/uwu && claude mcp add uwu-tester -- /usr/local/bin/uwu-mcp'`;
+  const claudeWriteConfig = `sudo -u uwu bash -c 'cd /home/uwu && claude mcp add uwu-code -- /usr/local/bin/uwu-mcp'`;
   const opencodeWriteConfig = `sudo mkdir -p /home/uwu/.config/opencode\nsudo tee /home/uwu/.config/opencode/config.json << 'MCPEOF'\n${opencodeMcpContent}\nMCPEOF`;
 
   // Claude Code prompt: Claude IS the browser agent — no external LLM needed.
-  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Opencode prompt: same self-executing approach
-  const opencodePrompt = `Read the test cases for the '${project}' project from the uwu-tester MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool and do NOT run test_runner.py. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+  const opencodePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool and do NOT run test_runner.py. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Must cd /home/uwu so Claude uses the project scope where the MCP server is registered.
   // Run as uwu (non-root) so --dangerously-skip-permissions is accepted.
@@ -1003,6 +1003,7 @@ export default function TestsPage() {
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([]);
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const agentRunStatusRef = useRef<Record<string, AgentRun["status"]>>({});
 
   // Load project list
   const loadProjects = useCallback(async () => {
@@ -1042,9 +1043,26 @@ export default function TestsPage() {
     const res = await fetch(`/api/tests/agent-run?project=${encodeURIComponent(slug)}`);
     if (res.ok) {
       const data = await res.json();
-      setAgentRuns(data.runs ?? []);
+      const nextRuns: AgentRun[] = data.runs ?? [];
+      const prevStatuses = agentRunStatusRef.current;
+      const nextStatuses: Record<string, AgentRun["status"]> = {};
+      let shouldReloadResults = false;
+
+      for (const run of nextRuns) {
+        nextStatuses[run.run_id] = run.status;
+        if (prevStatuses[run.run_id] === "running" && run.status !== "running") {
+          shouldReloadResults = true;
+        }
+      }
+
+      agentRunStatusRef.current = nextStatuses;
+      setAgentRuns(nextRuns);
+
+      if (shouldReloadResults) {
+        loadResults(slug);
+      }
     }
-  }, []);
+  }, [loadResults]);
 
   // Load env vars for selected project
   const loadEnvVars = useCallback(async (slug: string) => {
@@ -1083,6 +1101,7 @@ export default function TestsPage() {
 
   useEffect(() => {
     if (!selectedProject) return;
+    agentRunStatusRef.current = {};
     loadConfig(selectedProject);
     loadResults(selectedProject);
     loadAgentRuns(selectedProject);
@@ -1259,6 +1278,7 @@ export default function TestsPage() {
 
       if ((target === "claude" || target === "opencode") && runId) {
         const startedAt = new Date().toISOString();
+        agentRunStatusRef.current = { ...agentRunStatusRef.current, [runId]: "running" };
         setAgentRuns((prev) => {
           if (prev.some((run) => run.run_id === runId)) return prev;
           return [
@@ -1301,7 +1321,7 @@ export default function TestsPage() {
           </div>
           <div>
             <h1 className="text-lg font-bold" style={{ color: "#e2e8f0" }}>
-              uwu-tester
+              uwu-code
             </h1>
             <p className="text-xs" style={{ color: "#4a5568" }}>
               browser-use regression tests
@@ -1914,7 +1934,7 @@ export default function TestsPage() {
 
                 {results.length === 0 ? (
                   <div className="card flex items-center justify-center py-10 text-xs" style={{ color: "#4a5568" }}>
-                    No runs yet — click &quot;Test via API&quot; to start
+                    No runs yet — run tests via API, Claude Code, or OpenCode to start
                   </div>
                 ) : (
                   <div className="space-y-2">
