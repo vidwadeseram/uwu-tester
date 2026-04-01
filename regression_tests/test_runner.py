@@ -1,5 +1,5 @@
 """
-uwu-tester — browser-use test runner
+uwu-code — browser-use test runner
 
 Reads test cases from regression_tests/test_cases/<slug>.json,
 runs each via browser-use Agent, and writes results to
@@ -429,12 +429,25 @@ async def run_case_scripted(
                     and reg_submit_clicked
                     and (phone_reg_filled or first_reg_filled or email_filled)
                 )
+                # Check if the app set a 'verifications' key in localStorage — even
+                # with value 'undefined' this means the server processed the signup
+                # and triggered a phone OTP verification flow (no redirect expected).
+                has_verifications_key = False
+                try:
+                    ls_verifications = await page.evaluate(
+                        "() => Object.prototype.hasOwnProperty.call(localStorage, 'verifications')"
+                    )
+                    has_verifications_key = bool(ls_verifications)
+                except Exception:
+                    pass
+
                 success_hint = (
                     "already exists" in visible_text
                     or "already registered" in visible_text
                     or "otp" in visible_text
                     or "verify" in visible_text
                     or "signup-verification" in page.url.lower()
+                    or has_verifications_key
                     or _looks_like_success(page.url, visible_text)
                 )
                 passed = bool(success_hint or submitted)
@@ -688,7 +701,7 @@ async def main() -> None:
         print("No enabled test cases found.")
         sys.exit(0)
 
-    print(f"\nuwu-tester: running {len(enabled_cases)} test case(s) for '{slug}'")
+    print(f"\nuwu-code: running {len(enabled_cases)} test case(s) for '{slug}'")
     print(f"Project: {config.get('description', slug)}\n")
 
     openrouter_key = env.get("OPENROUTER_API_KEY", "")
@@ -798,7 +811,7 @@ async def main() -> None:
 
     # Print summary
     print("\n" + "=" * 60)
-    print("uwu-tester RESULTS")
+    print("uwu-code RESULTS")
     print("=" * 60)
     for r in results:
         icon = "✓" if r.passed else ("~" if r.skipped else "✗")
