@@ -51,7 +51,7 @@ def _env_non_negative_int(name: str, default: int) -> int:
         return default
 
 
-RECORDING_TAIL_MS = _env_non_negative_int("UWU_RECORDING_TAIL_MS", 5000)
+RECORDING_TAIL_MS = _env_non_negative_int("UWU_RECORDING_TAIL_MS", 15000)
 
 
 _JSON_RECOVERY_PATCHED = False
@@ -306,7 +306,7 @@ def _extract_latest_otp(text: str) -> str:
 
 def _read_otp_from_tmux(env: dict[str, str]) -> tuple[str, str]:
     session = env.get("OTP_TMUX_SESSION", "allinonepos").strip() or "allinonepos"
-    window = env.get("OTP_TMUX_WINDOW", "pos-commons").strip()
+    window = env.get("OTP_TMUX_WINDOW", "commons-api").strip()
     lines = env.get("OTP_TMUX_CAPTURE_LINES", "800").strip()
     line_count = lines if lines.isdigit() else "800"
 
@@ -368,6 +368,51 @@ async def run_case_scripted(
             viewport={"width": 1280, "height": 720},
         )
         page = await context.new_page()
+
+        async def _solve_otp_on_page() -> tuple[bool, str]:
+            """Read OTP from tmux and fill it into whatever OTP input is on screen."""
+            otp, source = _read_otp_from_tmux(env)
+            if not otp:
+                return False, f"OTP challenge detected but no OTP found from tmux target {source}"
+
+            filled = await _fill_first(
+                page,
+                [
+                    "input[name*='otp' i]",
+                    "input[placeholder*='otp' i]",
+                    "input[name*='verification' i]",
+                    "input[placeholder*='verification' i]",
+                    "input[name*='code' i]",
+                    "input[placeholder*='code' i]",
+                ],
+                otp,
+            )
+
+            if not filled:
+                try:
+                    candidates = page.locator("input[type='text'], input[type='tel'], input[type='number']")
+                    count = await candidates.count()
+                    if count >= len(otp):
+                        for idx, digit in enumerate(otp):
+                            await candidates.nth(idx).fill(digit, timeout=1200)
+                        filled = True
+                except Exception:
+                    filled = False
+
+            if not filled:
+                return False, f"OTP found ({otp}) from {source} but OTP inputs were not fillable"
+
+            clicked = await _click_by_names(page, ["verify", "submit", "continue", "confirm"])
+            await page.wait_for_timeout(3500)
+            visible_after = await _get_visible_text(page)
+            auth_error = _has_auth_error(visible_after)
+            still_otp = _is_otp_step(page.url, visible_after)
+            if clicked and not auth_error and not still_otp:
+                return True, f"SUCCESS_OTP via tmux {source}"
+            return False, (
+                f"OTP submit did not complete auth flow (clicked={bool(clicked)} auth_error={auth_error} "
+                f"still_otp={still_otp} source={source})"
+            )
 
         async def do_web_login() -> tuple[bool, str]:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=45000)
@@ -446,12 +491,25 @@ async def run_case_scripted(
                     moved_from_login = "login" not in page.url.lower()
                     otp_gate = _is_otp_step(page.url, visible_text)
                     success_like = _looks_like_success(page.url, visible_text)
-                    if explicit_user_filled and pass_filled and clicked_retry and (moved_from_login or otp_gate or success_like) and not auth_error:
-                        return True, "SUCCESS"
+                    if explicit_user_filled and pass_filled and clicked_retry and not auth_error:
+                        if otp_gate:
+                            solved, otp_detail = await _solve_otp_on_page()
+                            if solved:
+                                return True, otp_detail
+                            last_detail = otp_detail
+                            continue
+                        if moved_from_login or success_like:
+                            return True, "SUCCESS"
 
-                ok = phone_filled and pass_filled and clicked and (moved_from_login or otp_gate or success_like) and not auth_error
-                if ok:
-                    return True, "SUCCESS"
+                if phone_filled and pass_filled and clicked and not auth_error:
+                    if otp_gate:
+                        solved, otp_detail = await _solve_otp_on_page()
+                        if solved:
+                            return True, otp_detail
+                        last_detail = otp_detail
+                        continue
+                    if moved_from_login or success_like:
+                        return True, "SUCCESS"
                 last_detail = (
                     f"web_login checks: phone_filled={phone_filled} pass_filled={pass_filled} "
                     f"clicked={bool(clicked)} auth_error={auth_error} otp_gate={otp_gate} success_like={success_like} "
@@ -461,48 +519,6 @@ async def run_case_scripted(
             return False, last_detail
 
         async def do_admin_login() -> tuple[bool, str]:
-            async def solve_admin_otp() -> tuple[bool, str]:
-                otp, source = _read_otp_from_tmux(env)
-                if not otp:
-                    return False, f"OTP challenge detected but no OTP found from tmux target {source}"
-
-                filled = await _fill_first(
-                    page,
-                    [
-                        "input[name*='otp' i]",
-                        "input[placeholder*='otp' i]",
-                        "input[name*='verification' i]",
-                        "input[placeholder*='verification' i]",
-                    ],
-                    otp,
-                )
-
-                if not filled:
-                    try:
-                        candidates = page.locator("input[type='text'], input[type='tel'], input[type='number']")
-                        count = await candidates.count()
-                        if count >= len(otp):
-                            for idx, digit in enumerate(otp):
-                                await candidates.nth(idx).fill(digit, timeout=1200)
-                            filled = True
-                    except Exception:
-                        filled = False
-
-                if not filled:
-                    return False, f"OTP found from {source} but OTP inputs were not fillable"
-
-                clicked = await _click_by_names(page, ["verify", "submit", "continue", "confirm"])
-                await page.wait_for_timeout(3500)
-                visible_after = await _get_visible_text(page)
-                auth_error = _has_auth_error(visible_after)
-                still_otp = _is_otp_step(page.url, visible_after)
-                if clicked and not auth_error and not still_otp:
-                    return True, f"SUCCESS_OTP via tmux {source}"
-                return False, (
-                    f"OTP submit did not complete auth flow (clicked={bool(clicked)} auth_error={auth_error} "
-                    f"still_otp={still_otp} source={source})"
-                )
-
             await page.goto(admin_url, wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1200)
             last_detail = "admin_login failed"
@@ -540,7 +556,7 @@ async def run_case_scripted(
                 moved_from_login = "login" not in page.url.lower()
                 otp_gate = _is_otp_step(page.url, visible_text)
                 if user_filled and pass_filled and clicked and otp_gate:
-                    solved, otp_detail = await solve_admin_otp()
+                    solved, otp_detail = await _solve_otp_on_page()
                     if solved:
                         return True, otp_detail
                     last_detail = otp_detail
@@ -656,10 +672,28 @@ async def run_case_scripted(
                     or has_verifications_key
                     or _looks_like_success(page.url, visible_text)
                 )
-                passed = bool(success_hint or submitted)
-                if success_hint:
+
+                otp_needed = (
+                    "otp" in visible_text
+                    or "verify" in visible_text
+                    or "signup-verification" in page.url.lower()
+                )
+                if otp_needed and not ("already exists" in visible_text or "already registered" in visible_text):
+                    solved, otp_detail = await _solve_otp_on_page()
+                    if solved:
+                        passed = True
+                        detail = f"SUCCESS_REGISTER_OTP: {otp_detail}"
+                    elif submitted:
+                        passed = True
+                        detail = f"SUCCESS_SUBMITTED: registration triggered OTP but auto-verify failed ({otp_detail})"
+                    else:
+                        passed = False
+                        detail = f"Registration OTP flow failed: {otp_detail}"
+                elif success_hint:
+                    passed = True
                     detail = "SUCCESS"
                 elif submitted:
+                    passed = True
                     detail = (
                         "SUCCESS_SUBMITTED: registration form submitted; explicit success text not visible "
                         f"(email_filled={email_filled}, business_filled={business_filled}, confirm_reg_filled={confirm_reg_filled}, terms_checked={terms_checked})"

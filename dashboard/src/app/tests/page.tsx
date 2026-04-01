@@ -901,6 +901,93 @@ function VideoModal({ src, label, onClose }: { src: string; label: string; onClo
   );
 }
 
+function DetailDisplay({ detail }: { detail: string }) {
+  var parsed: Record<string, unknown> | null = null;
+  var trimmed: string;
+  var cleanText: string;
+  var obj: Record<string, unknown>;
+  var modules: Array<Record<string, unknown>>;
+  var entries: Array<[string, unknown]>;
+
+  try {
+    trimmed = detail.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      parsed = JSON.parse(trimmed);
+    }
+  } catch {
+    parsed = null;
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    cleanText = detail
+      .replace(/^SUCCESS_?/i, "")
+      .replace(/^BEST_EFFORT:\s*/i, "")
+      .replace(/^AUTH_WARNING:\s*/i, "⚠ ")
+      .replace(/^SUCCESS_SUBMITTED:\s*/i, "")
+      .trim();
+    if (!cleanText) cleanText = detail;
+    return (
+      <p className="text-xs mt-0.5 break-words" style={{ color: "#94a3b8", maxHeight: 80, overflowY: "auto" as const }}>
+        {cleanText}
+      </p>
+    );
+  }
+
+  obj = parsed as Record<string, unknown>;
+
+  if (typeof obj.reason === "string") {
+    return (
+      <p className="text-xs mt-0.5 break-words" style={{ color: "#94a3b8" }}>
+        {obj.reason}
+      </p>
+    );
+  }
+
+  if (Array.isArray(obj.modules)) {
+    modules = obj.modules as Array<Record<string, unknown>>;
+    return (
+      <div className="mt-1 space-y-0.5">
+        {modules.map(function (mod, i) {
+          var status = String(mod.status || mod.result || "");
+          var isPass = /pass/i.test(status);
+          var isFail = /fail/i.test(status);
+          var dotColor = isPass ? "#00ff88" : isFail ? "#ff4444" : "#ffd700";
+          return (
+            <div key={i} className="flex items-center gap-2 text-xs">
+              <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: dotColor }} />
+              <span style={{ color: "#e2e8f0" }}>{String(mod.module || mod.name || "Step " + (i + 1))}</span>
+              <span style={{ color: dotColor }} className="font-medium">{status}</span>
+              {Boolean(mod.note) && <span style={{ color: "#4a5568" }}>— {String(mod.note)}</span>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  entries = Object.entries(obj).filter(function (e) { return e[1] !== null && e[1] !== undefined; });
+  if (entries.length === 0) {
+    return (
+      <p className="text-xs mt-0.5 font-mono break-words" style={{ color: "#94a3b8" }}>{detail}</p>
+    );
+  }
+  return (
+    <div className="mt-1 space-y-0.5">
+      {entries.map(function (entry) {
+        var key = entry[0];
+        var val = entry[1];
+        var display = typeof val === "object" ? JSON.stringify(val) : String(val);
+        return (
+          <div key={key} className="flex gap-2 text-xs">
+            <span style={{ color: "#4a5568" }} className="flex-shrink-0">{key}:</span>
+            <span style={{ color: "#94a3b8" }} className="break-words">{display}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RunResultCard({ run, defaultOpen }: { run: RunResult; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
   const [videoSrc, setVideoSrc] = useState<{ src: string; label: string } | null>(null);
@@ -999,12 +1086,7 @@ function RunResultCard({ run, defaultOpen }: { run: RunResult; defaultOpen?: boo
                     </span>
                   </div>
                   {r.detail && (
-                    <p
-                      className="text-xs mt-0.5 font-mono break-words"
-                      style={{ color: "#94a3b8", maxHeight: 80, overflowY: "auto" }}
-                    >
-                      {r.detail}
-                    </p>
+                    <DetailDisplay detail={r.detail} />
                   )}
                   {r.recording && (
                     <button

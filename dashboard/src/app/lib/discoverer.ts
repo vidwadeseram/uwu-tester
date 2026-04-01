@@ -610,12 +610,38 @@ export function knowledgeFile(project: string): string {
   return path.join(ensureKnowledgeDir(), `${project}.md`);
 }
 
-export function writeKnowledge(project: string, content: string, workspacePath: string, customDir?: string): KnowledgeWriteResult {
-  const dir = customDir && customDir.trim() ? customDir.trim() : ensureKnowledgeDir();
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+function resolveKnowledgeTarget(project: string, customDir?: string): { dir: string; filePath: string; indexPath: string } {
+  const registryDir = ensureKnowledgeDir();
+  const trimmed = customDir?.trim() ?? "";
+
+  if (!trimmed) {
+    const dir = registryDir;
+    return {
+      dir,
+      filePath: path.join(dir, `${project}.md`),
+      indexPath: path.join(registryDir, "index.json"),
+    };
   }
-  const filePath = path.join(dir, `${project}.md`);
+
+  const resolved = path.resolve(trimmed);
+  const asFile = resolved.toLowerCase().endsWith(".md");
+  const dir = asFile ? path.dirname(resolved) : resolved;
+  const filePath = asFile ? resolved : path.join(dir, "AGENTS.md");
+
+  return {
+    dir,
+    filePath,
+    indexPath: path.join(registryDir, "index.json"),
+  };
+}
+
+export function writeKnowledge(project: string, content: string, workspacePath: string, customDir?: string): KnowledgeWriteResult {
+  const target = resolveKnowledgeTarget(project, customDir);
+
+  if (!fs.existsSync(target.dir)) {
+    fs.mkdirSync(target.dir, { recursive: true });
+  }
+  const filePath = target.filePath;
   const incoming = content.trim();
   let mode: KnowledgeWriteResult["mode"] = "created";
 
@@ -637,7 +663,7 @@ export function writeKnowledge(project: string, content: string, workspacePath: 
     mode = "created";
   }
 
-  const indexPath = path.join(dir, "index.json");
+  const indexPath = target.indexPath;
   const prev: KnowledgeIndexEntry[] =
     fs.existsSync(indexPath)
       ? (JSON.parse(fs.readFileSync(indexPath, "utf-8")) as KnowledgeIndexEntry[])

@@ -155,6 +155,11 @@ function isDiscovererResponse(value: unknown): value is DiscovererResponse {
   return true;
 }
 
+function docsPathFromRun(run: DiscoverRun): string {
+  if (!run.response || !isDiscovererResponse(run.response)) return "";
+  return run.response.persisted.knowledgeFile ?? "";
+}
+
 export default function DiscovererPage() {
   const [workspacePath, setWorkspacePath] = useState("");
   const [project, setProject] = useState("");
@@ -421,6 +426,7 @@ export default function DiscovererPage() {
               <div key={run.run_id} className="rounded px-2 py-1.5" style={{ background: "rgba(30,45,74,0.45)", border: "1px solid rgba(30,45,74,0.7)" }}>
                 <div className="flex items-center gap-2 text-xs" style={{ color: targetColor(run.target) }}>
                   <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <title>Running</title>
                     <path d="M21 12a9 9 0 1 1-9-9" />
                   </svg>
                   <span className="font-mono">{run.target} · {run.project}</span>
@@ -461,6 +467,11 @@ export default function DiscovererPage() {
                 <div className="text-[11px] mt-0.5" style={{ color: "#94a3b8" }}>
                   started {formatTime(run.started_at)}
                 </div>
+                {run.status === "completed" && docsPathFromRun(run) && (
+                  <div className="text-[11px] mt-0.5 font-mono truncate" style={{ color: "#7dd3fc" }}>
+                    docs: {docsPathFromRun(run)}
+                  </div>
+                )}
                 {run.status === "failed" && run.summary && (
                   <pre className="text-[10px] mt-1 rounded p-1 overflow-x-auto whitespace-pre-wrap break-all" style={{ background: "rgba(0,0,0,0.3)", color: "#f87171", maxHeight: "8rem" }}>
                     {run.summary.slice(-800)}

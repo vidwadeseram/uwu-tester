@@ -37,10 +37,23 @@ interface DiscovererAiOutput {
   agent_docs: string;
 }
 
-function ensureTestCasesDir() {
-  if (!fs.existsSync(TEST_CASES_DIR)) {
-    fs.mkdirSync(TEST_CASES_DIR, { recursive: true });
-  }
+function normalizeForCompare(input: string): string {
+  return path.resolve(input).replace(/\\+/g, "/").replace(/\/+$/, "");
+}
+
+function isWithinAnyAllowedRoot(candidate: string): boolean {
+  const normalizedCandidate = normalizeForCompare(candidate);
+  return allowedWorkspaceRoots().some((root) => {
+    const normalizedRoot = normalizeForCompare(root);
+    return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
+  });
+}
+
+function resolvePersistPath(raw: string, workspacePath: string): string | null {
+  if (!raw.trim()) return "";
+  const candidate = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw);
+  if (!isWithinAnyAllowedRoot(candidate)) return null;
+  return candidate;
 }
 
 function compactWorkspaceContext(ctx: ReturnType<typeof collectWorkspaceContext>) {
@@ -301,6 +314,22 @@ export async function POST(req: NextRequest) {
   const persistDocs = parsed.persistDocs !== false;
   const testSavePath = (parsed.testSavePath ?? "").trim();
   const docsSavePath = (parsed.docsSavePath ?? "").trim();
+  const resolvedTestSavePath = resolvePersistPath(testSavePath, normalizedWorkspace);
+  const resolvedDocsSavePath = resolvePersistPath(docsSavePath, normalizedWorkspace);
+
+  if (testSavePath && !resolvedTestSavePath) {
+    return NextResponse.json(
+      { error: `testSavePath must be under allowed roots: ${allowedWorkspaceRoots().join(", ")}` },
+      { status: 400 }
+    );
+  }
+
+  if (docsSavePath && !resolvedDocsSavePath) {
+    return NextResponse.json(
+      { error: `docsSavePath must be under allowed roots: ${allowedWorkspaceRoots().join(", ")}` },
+      { status: 400 }
+    );
+  }
 
   const context = collectWorkspaceContext(normalizedWorkspace);
 
@@ -327,7 +356,7 @@ export async function POST(req: NextRequest) {
   let testsMerge: DiscovererMergeReport | undefined;
 
   if (persistTests) {
-    const resolvedTestDir = testSavePath || TEST_CASES_DIR;
+    const resolvedTestDir = resolvedTestSavePath || TEST_CASES_DIR;
     if (!fs.existsSync(resolvedTestDir)) {
       fs.mkdirSync(resolvedTestDir, { recursive: true });
     }
@@ -363,7 +392,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (persistDocs) {
-    const knowledge = writeKnowledge(project, agentDocs, normalizedWorkspace, docsSavePath || undefined);
+    const knowledge = writeKnowledge(project, agentDocs, normalizedWorkspace, resolvedDocsSavePath || undefined);
     knowledgeFile = knowledge.filePath;
     docsMode = knowledge.mode;
   }
