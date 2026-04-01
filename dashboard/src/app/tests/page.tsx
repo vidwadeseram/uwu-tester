@@ -78,10 +78,10 @@ function McpModal({
   const opencodeWriteConfig = `sudo mkdir -p /home/uwu/.config/opencode\nsudo tee /home/uwu/.config/opencode/config.json << 'MCPEOF'\n${opencodeMcpContent}\nMCPEOF`;
 
   // Claude Code prompt: Claude IS the browser agent — no external LLM needed.
-  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. For checkboxes always use locator.check(). If signup/registration includes Terms/Conditions or Privacy checkbox, you MUST check it before submit; if submit is blocked by terms/privacy validation it is FAIL. Registration is SUCCESS only with explicit signal: OTP/verification step reached, or clear success message, or localStorage 'verifications' has meaningful non-empty value. If URL stays on signup/register without explicit success, it is FAIL. Any visible validation/error text means FAIL. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. Recording paths must be relative to the results root (example: ${project}/recordings/manual/<run_id>/<case_id>/video.webm) and must not start with 'results/'. Keep recording running for at least 5 extra seconds after each case reaches its final assertion before closing the page/context. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+  const claudePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool. For checkboxes always use locator.check(). If signup/registration includes Terms/Conditions or Privacy checkbox, you MUST check it before submit; if submit is blocked by terms/privacy validation it is FAIL. In this app, /signup/ is registration and /signup-verification/ is OTP. Registration is SUCCESS only with explicit signal: redirect to /signup-verification/, clear success message, or explicit account-already-exists message. If URL stays on /signup/ without explicit success, it is FAIL. Any visible validation/error text means FAIL. Before each case, clear localStorage, sessionStorage, and cookies for the active origin to prevent stale-state false positives. Capture browser errors for each case (console errors, page exceptions, failed requests, and HTTP >= 400 responses) and include them in case detail JSON under key 'browser_errors'. For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. Recording paths must be relative to the results root (example: ${project}/recordings/manual/<run_id>/<case_id>/video.webm) and must not start with 'results/'. Keep recording running for at least 20 extra seconds after each case reaches its final assertion before closing the page/context. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Opencode prompt: same self-executing approach
-  const opencodePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool and do NOT run test_runner.py. For checkboxes always use locator.check(). If signup/registration includes Terms/Conditions or Privacy checkbox, you MUST check it before submit; if submit is blocked by terms/privacy validation it is FAIL. Registration is SUCCESS only with explicit signal: OTP/verification step reached, or clear success message, or localStorage 'verifications' has meaningful non-empty value. If URL stays on signup/register without explicit success, it is FAIL. Any visible validation/error text means FAIL. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. Recording paths must be relative to the results root (example: ${project}/recordings/manual/<run_id>/<case_id>/video.webm) and must not start with 'results/'. Keep recording running for at least 5 extra seconds after each case reaches its final assertion before closing the page/context. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
+  const opencodePrompt = `Read the test cases for the '${project}' project from the uwu-code MCP resource uwu://projects/${project}/cases. ${scopeInstruction} For each selected test case, YOU execute it as a browser agent: use Bash with headless playwright (python at /opt/vps-dashboard/regression_tests/.venv/bin/python) to navigate the app and verify the outcome. Do NOT call any run_tests tool and do NOT run test_runner.py. For checkboxes always use locator.check(). If signup/registration includes Terms/Conditions or Privacy checkbox, you MUST check it before submit; if submit is blocked by terms/privacy validation it is FAIL. In this app, /signup/ is registration and /signup-verification/ is OTP. Registration is SUCCESS only with explicit signal: redirect to /signup-verification/, clear success message, or explicit account-already-exists message. If URL stays on /signup/ without explicit success, it is FAIL. Any visible validation/error text means FAIL. Before each case, clear localStorage, sessionStorage, and cookies for the active origin to prevent stale-state false positives. Capture browser errors for each case (console errors, page exceptions, failed requests, and HTTP >= 400 responses) and include them in case detail JSON under key 'browser_errors'. For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons. Capture recording artifacts for each case under results/${project}/recordings/manual/<run_id>/<case_id> and include recording paths in saved results. Recording paths must be relative to the results root (example: ${project}/recordings/manual/<run_id>/<case_id>/video.webm) and must not start with 'results/'. Keep recording running for at least 20 extra seconds after each case reaches its final assertion before closing the page/context. After all cases are done, call the save_results MCP tool to persist results, then give me a detailed pass/fail report with what you observed.`;
 
   // Must cd /home/uwu so Claude uses the project scope where the MCP server is registered.
   // Run as uwu (non-root) so --dangerously-skip-permissions is accepted.
@@ -961,6 +961,34 @@ function DetailDisplay({ detail }: { detail: string }) {
             </div>
           );
         })}
+      </div>
+    );
+  }
+
+  if (Array.isArray(obj.browser_errors)) {
+    const browserErrors = obj.browser_errors as Array<Record<string, unknown>>;
+    const summary = typeof obj.summary === "string" ? obj.summary : "Browser errors captured";
+
+    return (
+      <div className="mt-1 space-y-1">
+        <div className="text-xs" style={{ color: "#e2e8f0" }}>{summary}</div>
+        <div className="text-[11px]" style={{ color: "#ff4444" }}>
+          {browserErrors.length} browser error{browserErrors.length === 1 ? "" : "s"} captured
+        </div>
+        <div className="space-y-1" style={{ maxHeight: 120, overflowY: "auto" as const }}>
+          {browserErrors.map((entry, index) => {
+            const kind = String(entry.kind ?? "error");
+            const message = String(entry.message ?? "");
+            const url = typeof entry.url === "string" ? entry.url : "";
+            return (
+              <div key={`${kind}-${index}`} className="text-[11px] rounded px-2 py-1" style={{ background: "rgba(255,68,68,0.08)", border: "1px solid rgba(255,68,68,0.18)" }}>
+                <div style={{ color: "#ff7b7b" }}>{kind}</div>
+                <div style={{ color: "#e2e8f0" }} className="break-words">{message || "(empty error message)"}</div>
+                {url && <div style={{ color: "#94a3b8" }} className="break-all">{url}</div>}
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }

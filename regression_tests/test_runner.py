@@ -27,6 +27,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from browser_use import Agent
 from browser_use.browser.profile import BrowserProfile
@@ -51,7 +52,7 @@ def _env_non_negative_int(name: str, default: int) -> int:
         return default
 
 
-RECORDING_TAIL_MS = _env_non_negative_int("UWU_RECORDING_TAIL_MS", 15000)
+RECORDING_TAIL_MS = max(15000, _env_non_negative_int("UWU_RECORDING_TAIL_MS", 30000))
 
 SCRIPTED_CASE_IDS = {"web_register", "web_login", "web_smoke", "admin_login", "admin_smoke"}
 
@@ -109,6 +110,82 @@ class CaseResult:
     duration_s: float
     skipped: bool = False
     recording: str | None = None  # relative path to video file
+
+
+def _pick_best_recording_file(case_rec_dir: Path | None) -> str | None:
+    if case_rec_dir is None:
+        return None
+    candidates = list(case_rec_dir.glob("*.webm")) + list(case_rec_dir.glob("*.mp4"))
+    if not candidates:
+        return None
+
+    scored: list[tuple[int, float, Path]] = []
+    for file in candidates:
+        try:
+            stat = file.stat()
+            scored.append((int(stat.st_size), float(stat.st_mtime), file))
+        except Exception:
+            continue
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    best = scored[0][2]
+    return str(best.relative_to(RESULTS_DIR))
+
+
+def _normalize_message(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _to_error_detail(base_detail: str, browser_errors: list[dict[str, Any]]) -> str:
+    payload: dict[str, Any] = {"summary": base_detail}
+    if browser_errors:
+        payload["browser_errors"] = browser_errors
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _console_is_error(msg_type: str) -> bool:
+    return msg_type.lower() in {"error", "assert"}
+
+
+def _should_skip_noise(kind: str, text: str) -> bool:
+    normalized = f"{kind} {text}".lower()
+    noise_markers = [
+        "favicon.ico",
+        "chrome-error://",
+        "net::err_aborted",
+        "download the react devtools",
+    ]
+    return any(marker in normalized for marker in noise_markers)
+
+
+def _append_browser_error(items: list[dict[str, Any]], kind: str, message: str, url: str = "") -> None:
+    clean_message = _normalize_message(message)
+    if not clean_message:
+        return
+    if _should_skip_noise(kind, clean_message):
+        return
+    entry: dict[str, Any] = {
+        "kind": kind,
+        "message": clean_message,
+    }
+    clean_url = _normalize_message(url)
+    if clean_url:
+        entry["url"] = clean_url
+    items.append(entry)
+
+
+def _cap_errors(items: list[dict[str, Any]], limit: int = 200) -> list[dict[str, Any]]:
+    if len(items) <= limit:
+        return items
+    trimmed = items[:limit]
+    trimmed.append({
+        "kind": "meta",
+        "message": f"Truncated browser_errors at {limit} entries",
+    })
+    return trimmed
 
 
 def substitute_vars(text: str, env: dict[str, str]) -> str:
@@ -224,6 +301,24 @@ async def _wait_for_signup_form(page, timeout_ms: int = 22000) -> bool:
         return False
 
 
+async def _clear_storage_state(page, context) -> None:
+    try:
+        await context.clear_cookies()
+    except Exception:
+        pass
+    try:
+        await page.evaluate(
+            """
+            () => {
+              try { localStorage.clear(); } catch (_) {}
+              try { sessionStorage.clear(); } catch (_) {}
+            }
+            """
+        )
+    except Exception:
+        pass
+
+
 def _normalize_phone(phone: str) -> str:
     digits = re.sub(r"\D", "", phone)
     if not digits:
@@ -279,7 +374,13 @@ def _is_otp_step(url: str, html: str) -> bool:
         or "verification" in lowered
         or "verify your" in lowered
         or "verification code" in lowered
+        or "signup-verification/" in lowered
     )
+
+
+def _is_signup_step(url: str) -> bool:
+    lowered = (url or "").lower()
+    return "signup/" in lowered or lowered.rstrip("/").endswith("signup")
 
 
 def _extract_latest_otp(text: str) -> str:
@@ -308,7 +409,7 @@ def _extract_latest_otp(text: str) -> str:
 
 def _read_otp_from_tmux(env: dict[str, str]) -> tuple[str, str]:
     session = env.get("OTP_TMUX_SESSION", "allinonepos").strip() or "allinonepos"
-    window = env.get("OTP_TMUX_WINDOW", "commons-api").strip()
+    window = env.get("OTP_TMUX_WINDOW", "pos-commons").strip()
     lines = env.get("OTP_TMUX_CAPTURE_LINES", "800").strip()
     line_count = lines if lines.isdigit() else "800"
 
@@ -394,6 +495,7 @@ async def run_case_scripted(
     passed = False
     detail = "No scripted result"
     recording_rel: str | None = None
+    browser_errors: list[dict[str, Any]] = []
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
@@ -401,7 +503,74 @@ async def run_case_scripted(
             record_video_dir=str(case_rec_dir) if case_rec_dir else None,
             viewport={"width": 1280, "height": 720},
         )
+        await context.add_init_script(
+            """
+            () => {
+              try { localStorage.clear(); } catch (_) {}
+              try { sessionStorage.clear(); } catch (_) {}
+            }
+            """
+        )
+        await context.clear_cookies()
         page = await context.new_page()
+
+        def on_console(message):
+            try:
+                message_type = message.type or "console"
+                if _console_is_error(message_type):
+                    location = message.location or {}
+                    location_url = str(location.get("url") or "")
+                    _append_browser_error(
+                        browser_errors,
+                        f"console.{message_type}",
+                        str(message.text or ""),
+                        location_url,
+                    )
+            except Exception:
+                pass
+
+        def on_page_error(error):
+            try:
+                _append_browser_error(browser_errors, "pageerror", str(error or ""), page.url)
+            except Exception:
+                pass
+
+        def on_request_failed(request):
+            try:
+                failure_text = ""
+                try:
+                    failure = request.failure
+                    if callable(failure):
+                        info = failure()
+                    else:
+                        info = failure
+                    if isinstance(info, dict):
+                        failure_text = str(info.get("errorText") or "")
+                    else:
+                        failure_text = str(getattr(info, "error_text", "") or "")
+                except Exception:
+                    failure_text = ""
+                msg = f"{request.method} {request.url} {failure_text}".strip()
+                _append_browser_error(browser_errors, "request.failed", msg, request.url)
+            except Exception:
+                pass
+
+        def on_response(response):
+            try:
+                if response.status >= 400:
+                    _append_browser_error(
+                        browser_errors,
+                        f"response.{response.status}",
+                        f"HTTP {response.status} {response.request.method}",
+                        response.url,
+                    )
+            except Exception:
+                pass
+
+        page.on("console", on_console)
+        page.on("pageerror", on_page_error)
+        page.on("requestfailed", on_request_failed)
+        page.on("response", on_response)
 
         async def _solve_otp_on_page() -> tuple[bool, str]:
             """Read OTP from tmux and fill it into whatever OTP input is on screen."""
@@ -450,6 +619,7 @@ async def run_case_scripted(
 
         async def do_web_login() -> tuple[bool, str]:
             await page.goto(web_url, wait_until="domcontentloaded", timeout=45000)
+            await _clear_storage_state(page, context)
             await page.wait_for_timeout(1200)
             last_detail = "web_login failed"
             attempt_count = max(4, len(web_phone_variants))
@@ -554,6 +724,7 @@ async def run_case_scripted(
 
         async def do_admin_login() -> tuple[bool, str]:
             await page.goto(admin_url, wait_until="domcontentloaded", timeout=45000)
+            await _clear_storage_state(page, context)
             await page.wait_for_timeout(1200)
             last_detail = "admin_login failed"
             for attempt in range(4):
@@ -612,6 +783,7 @@ async def run_case_scripted(
         try:
             if case_id == "web_register":
                 await page.goto(web_url, wait_until="domcontentloaded", timeout=45000)
+                await _clear_storage_state(page, context)
                 await page.wait_for_timeout(1200)
                 await _wait_for_login_form(page)
                 signup_clicked = await _click_by_names(page, ["sign up", "register", "create account"])
@@ -668,15 +840,23 @@ async def run_case_scripted(
                     confirm_reg_filled = False
 
                 terms_checked = False
+                checkbox_present = False
                 try:
                     checkbox = page.locator("input[type='checkbox']").first
                     if await checkbox.count() > 0:
+                        checkbox_present = True
                         await checkbox.check(timeout=3500)
                         terms_checked = True
                 except Exception:
                     terms_checked = False
 
-                reg_submit_clicked = await _click_by_names(page, ["sign up", "register", "create account", "submit"])
+                if checkbox_present and not terms_checked:
+                    passed = False
+                    detail = "Registration failed: terms/privacy checkbox exists but could not be checked"
+                    reg_submit_clicked = False
+                else:
+                    reg_submit_clicked = await _click_by_names(page, ["sign up", "register", "create account", "submit"])
+
                 await page.wait_for_timeout(4000)
                 visible_text = (await _get_visible_text(page)).lower()
                 submitted = bool(
@@ -684,17 +864,7 @@ async def run_case_scripted(
                     and reg_submit_clicked
                     and (phone_reg_filled or first_reg_filled or email_filled)
                 )
-                # Check if the app set a 'verifications' key in localStorage — even
-                # with value 'undefined' this means the server processed the signup
-                # and triggered a phone OTP verification flow (no redirect expected).
-                has_verifications_key = False
-                try:
-                    ls_verifications = await page.evaluate(
-                        "() => Object.prototype.hasOwnProperty.call(localStorage, 'verifications')"
-                    )
-                    has_verifications_key = bool(ls_verifications)
-                except Exception:
-                    pass
+                signup_url_after_submit = page.url.lower()
 
                 success_hint = (
                     "already exists" in visible_text
@@ -702,38 +872,38 @@ async def run_case_scripted(
                     or "otp" in visible_text
                     or "verify" in visible_text
                     or "signup-verification" in page.url.lower()
-                    or has_verifications_key
-                    or _looks_like_success(page.url, visible_text)
                 )
 
-                otp_needed = (
-                    "otp" in visible_text
-                    or "verify" in visible_text
-                    or "signup-verification" in page.url.lower()
-                )
+                otp_needed = _is_otp_step(page.url, visible_text)
                 if otp_needed and not ("already exists" in visible_text or "already registered" in visible_text):
                     solved, otp_detail = await _solve_otp_on_page()
                     if solved:
                         passed = True
                         detail = f"SUCCESS_REGISTER_OTP: {otp_detail}"
                     elif submitted:
-                        passed = True
-                        detail = f"SUCCESS_SUBMITTED: registration triggered OTP but auto-verify failed ({otp_detail})"
+                        passed = False
+                        detail = f"OTP_VERIFY_FAILED: registration submitted but OTP verification failed ({otp_detail})"
                     else:
                         passed = False
                         detail = f"Registration OTP flow failed: {otp_detail}"
                 elif success_hint:
                     passed = True
                     detail = "SUCCESS"
-                elif submitted:
-                    passed = True
+                elif submitted and _is_signup_step(signup_url_after_submit):
+                    passed = False
                     detail = (
-                        "SUCCESS_SUBMITTED: registration form submitted; explicit success text not visible "
+                        "SUBMITTED_BUT_STILL_ON_SIGNUP: registration submit completed but page remained on signup/ "
+                        f"(url={signup_url_after_submit})"
+                    )
+                elif submitted:
+                    passed = False
+                    detail = (
+                        "SUBMITTED_WITHOUT_EXPLICIT_SUCCESS: registration submitted but OTP/success signal not confirmed "
                         f"(email_filled={email_filled}, business_filled={business_filled}, confirm_reg_filled={confirm_reg_filled}, terms_checked={terms_checked})"
                     )
                 else:
-                    passed = True
-                    detail = "BEST_EFFORT: registration path was not fully verifiable in this environment (hydration/verification gate)"
+                    passed = False
+                    detail = "Registration flow not verifiable: explicit success signal was not detected"
             elif case_id == "web_login":
                 passed, detail = await do_web_login()
 
@@ -800,10 +970,17 @@ async def run_case_scripted(
             await context.close()
             await browser.close()
 
-    if case_rec_dir:
-        videos = list(case_rec_dir.glob("*.webm")) + list(case_rec_dir.glob("*.mp4"))
-        if videos:
-            recording_rel = str(videos[0].relative_to(RESULTS_DIR))
+    recording_rel = _pick_best_recording_file(case_rec_dir)
+
+    browser_errors = _cap_errors(browser_errors)
+    if browser_errors:
+        detail = _to_error_detail(detail, browser_errors)
+        if passed:
+            passed = False
+            detail = _to_error_detail(
+                "Browser errors were detected during execution; marking case as failed.",
+                browser_errors,
+            )
 
     return CaseResult(
         id=case["id"],
@@ -876,10 +1053,7 @@ async def run_case(
 
     # Find video file if recorded
     recording_rel: str | None = None
-    if case_rec_dir:
-        videos = list(case_rec_dir.glob("*.webm")) + list(case_rec_dir.glob("*.mp4"))
-        if videos:
-            recording_rel = str(videos[0].relative_to(RESULTS_DIR))
+    recording_rel = _pick_best_recording_file(case_rec_dir)
 
     return CaseResult(
         id=case["id"],
