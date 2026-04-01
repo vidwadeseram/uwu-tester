@@ -5,13 +5,48 @@ import { getReadableProjectPaths } from "@/app/lib/tests-paths";
 
 const RESULTS_DIR = path.join(process.cwd(), "..", "regression_tests", "results");
 
-function resolveRecordingPath(file: string): string {
+/**
+ * When the exact recording file (e.g. video.webm) doesn't exist but the
+ * directory contains other .webm/.mp4 files (hash-named Playwright recordings),
+ * pick the largest non-empty file in that directory.
+ */
+function findBestRecordingInDir(dir: string): string | null {
+  if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return null;
+  const validExts = [".webm", ".mp4"];
+  const candidates = fs.readdirSync(dir)
+    .filter((f) => validExts.includes(path.extname(f).toLowerCase()))
+    .map((f) => {
+      const full = path.join(dir, f);
+      const stat = fs.statSync(full);
+      return { path: full, size: stat.size };
+    })
+    .filter((c) => c.size > 0)
+    .sort((a, b) => b.size - a.size);
+  return candidates.length > 0 ? candidates[0].path : null;
+}
+
+function resolveRecordingPath(file: string): string | null {
   const project = file.split("/")[0] ?? "";
+  const roots: string[] = [];
+
   if (/^[a-zA-Z0-9_-]+$/.test(project)) {
-    const projectPath = path.join(getReadableProjectPaths(project).resultsDir, file);
-    if (fs.existsSync(projectPath)) return projectPath;
+    roots.push(getReadableProjectPaths(project).resultsDir);
   }
-  return path.join(RESULTS_DIR, file);
+  roots.push(RESULTS_DIR);
+
+  for (const root of roots) {
+    const exact = path.join(root, file);
+    if (fs.existsSync(exact)) return exact;
+  }
+
+  // Exact file not found — try scanning the parent directory for recordings
+  for (const root of roots) {
+    const dir = path.dirname(path.join(root, file));
+    const best = findBestRecordingInDir(dir);
+    if (best) return best;
+  }
+
+  return null;
 }
 
 /**
@@ -28,6 +63,9 @@ export async function GET(req: NextRequest) {
   }
 
   const filePath = resolveRecordingPath(file);
+  if (!filePath) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   const project = file.split("/")[0] ?? "";
   const projectRoot = /^[a-zA-Z0-9_-]+$/.test(project) ? getReadableProjectPaths(project).resultsDir : RESULTS_DIR;
@@ -36,10 +74,6 @@ export async function GET(req: NextRequest) {
   const resolvedFilePath = path.resolve(filePath);
   if (!allowedRoots.some((root) => resolvedFilePath.startsWith(root + path.sep) || resolvedFilePath === root)) {
     return NextResponse.json({ error: "Access denied" }, { status: 403 });
-  }
-
-  if (!fs.existsSync(filePath)) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
   const stat = fs.statSync(filePath);

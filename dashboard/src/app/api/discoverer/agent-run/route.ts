@@ -208,7 +208,26 @@ function buildRunnerCommand(target: DiscoverTarget, input: {
   if (target === "claude") {
     return `cd /home/uwu && claude --dangerously-skip-permissions -p ${shellQuote(prompt)}`;
   }
-  return `cd ${shellQuote(REGRESSION_DIR)} && opencode run --dir ${shellQuote(REGRESSION_DIR)} ${shellQuote(prompt)}`;
+
+  const opencodeLookup = [
+    "OPENCODE_BIN=\"$(command -v opencode || true)\"",
+    "[ -z \"$OPENCODE_BIN\" ] && [ -x /usr/local/bin/opencode ] && OPENCODE_BIN=/usr/local/bin/opencode",
+    "[ -z \"$OPENCODE_BIN\" ] && [ -x /opt/homebrew/bin/opencode ] && OPENCODE_BIN=/opt/homebrew/bin/opencode",
+    "[ -z \"$OPENCODE_BIN\" ] && [ -x /home/uwu/.local/bin/opencode ] && OPENCODE_BIN=/home/uwu/.local/bin/opencode",
+  ].join("; ");
+
+  const runWithOpencode = `cd ${shellQuote(REGRESSION_DIR)} && \"$OPENCODE_BIN\" run --dir ${shellQuote(REGRESSION_DIR)} ${shellQuote(prompt)}`;
+  const fallbackToApi = `${curlCmd}`;
+
+  return [
+    opencodeLookup,
+    "if [ -z \"$OPENCODE_BIN\" ]; then",
+    "  echo \"opencode binary not found; falling back to direct Discoverer API\" >&2",
+    `  ${fallbackToApi}`,
+    "else",
+    `  ${runWithOpencode} || { echo \"opencode run failed; falling back to direct Discoverer API\" >&2; ${fallbackToApi}; }`,
+    "fi",
+  ].join("; ");
 }
 
 function spawnBackgroundRun(meta: DiscoverRun) {
@@ -229,17 +248,28 @@ function spawnBackgroundRun(meta: DiscoverRun) {
     docsSavePath: meta.docsSavePath,
   });
 
-  const wrapped = `${runnerCmd} > ${shellQuote(responseAbs)} 2> ${shellQuote(logAbs)}; code=$?; cat ${shellQuote(responseAbs)} >> ${shellQuote(logAbs)}; echo $code > ${shellQuote(exitAbs)}`;
+  const wrapped = `${runnerCmd} > ${shellQuote(responseAbs)} 2> ${shellQuote(logAbs)}; code=$?; if [ -f ${shellQuote(responseAbs)} ]; then cat ${shellQuote(responseAbs)} >> ${shellQuote(logAbs)}; fi; echo $code > ${shellQuote(exitAbs)}`;
 
-  const child = spawn("sudo", ["-u", "uwu", "bash", "-lc", wrapped], {
-    cwd: REGRESSION_DIR,
-    env: {
-      ...process.env,
-      HOME: "/home/uwu",
-    },
-    detached: true,
-    stdio: "ignore",
-  });
+  const env = {
+    ...process.env,
+    HOME: "/home/uwu",
+    PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin:/home/uwu/.local/bin`,
+  };
+
+  const canSetUser = typeof process.getuid === "function" && process.getuid() === 0;
+  const child = canSetUser
+    ? spawn("sudo", ["-u", "uwu", "bash", "-lc", wrapped], {
+        cwd: REGRESSION_DIR,
+        env,
+        detached: true,
+        stdio: "ignore",
+      })
+    : spawn("bash", ["-lc", wrapped], {
+        cwd: REGRESSION_DIR,
+        env,
+        detached: true,
+        stdio: "ignore",
+      });
 
   child.unref();
   return child.pid ?? 0;
