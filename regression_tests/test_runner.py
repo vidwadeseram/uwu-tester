@@ -348,14 +348,14 @@ async def run_case_scripted(
         case_rec_dir = recording_dir / case["id"]
         case_rec_dir.mkdir(parents=True, exist_ok=True)
 
-    web_url = env.get("WEB_BASE_URL", "http://95.111.238.19:3001")
-    admin_url = env.get("ADMIN_BASE_URL", "http://95.111.238.19:3002")
-    web_phone_raw = env.get("WEB_PHONE", "")
+    web_url = env.get("WEB_BASE_URL", "http://95.111.238.19:3100")
+    admin_url = env.get("ADMIN_BASE_URL", "http://95.111.238.19:3101")
+    web_phone_raw = env.get("WEB_PHONE", "0771234999")
     web_phone = _normalize_phone(web_phone_raw)
     web_phone_variants = _phone_variants(web_phone_raw or web_phone)
-    web_pass = env.get("WEB_PASSWORD", "")
-    admin_user = env.get("ADMIN_USERNAME", "")
-    admin_pass = env.get("ADMIN_PASSWORD", "")
+    web_pass = env.get("WEB_PASSWORD", "Test@12345")
+    admin_user = env.get("ADMIN_USERNAME", "SuperAdmin")
+    admin_pass = env.get("ADMIN_PASSWORD", "mk9v4@DIbcR15R91")
     random_digits = env.get("RANDOM_6_DIGITS", "")
     register_phone = f"07{random_digits}" if random_digits else (web_phone or "0771234999")
 
