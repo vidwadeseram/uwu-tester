@@ -13,10 +13,12 @@ import {
   DiscovererWorkflow,
   inferProjectSlugFromWorkspace,
   mergeDiscovererTestConfig,
+  resolveKnowledgeFilePath,
   resolveWorkspacePath,
   safeProjectSlug,
   writeKnowledge,
 } from "@/app/lib/discoverer";
+import { recordDiscovererHistory } from "@/app/lib/discoverer-history";
 import { readEnvKeys, readSettings } from "@/app/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +47,7 @@ interface CliRunResult {
   stdout: string;
   stderr: string;
   code: number;
+  errorMessage?: string;
 }
 
 function normalizeForCompare(input: string): string {
@@ -64,6 +67,17 @@ function resolvePersistPath(raw: string, workspacePath: string): string | null {
   const candidate = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(workspacePath, raw);
   if (!isWithinAnyAllowedRoot(candidate)) return null;
   return candidate;
+}
+
+function readOptionalFileText(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return null;
+    return fs.readFileSync(filePath, "utf-8");
+  } catch {
+    return null;
+  }
 }
 
 function compactWorkspaceContext(ctx: ReturnType<typeof collectWorkspaceContext>) {
@@ -267,18 +281,30 @@ async function generateWithModel(project: string, context: ReturnType<typeof col
   };
 }
 
-function runCli(file: string, args: string[], cwd: string): Promise<CliRunResult> {
+function runCli(
+  file: string,
+  args: string[],
+  cwd: string,
+  envOverrides?: Record<string, string>,
+  envStrip?: string[]
+): Promise<CliRunResult> {
   return new Promise((resolve) => {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: process.env.HOME || "/home/uwu",
+      PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin:/home/uwu/.local/bin`,
+      ...(envOverrides ?? {}),
+    };
+    for (const key of envStrip ?? []) {
+      delete env[key];
+    }
+
     execFile(
       file,
       args,
       {
         cwd,
-        env: {
-          ...process.env,
-          HOME: process.env.HOME || "/home/uwu",
-          PATH: `${process.env.PATH ?? ""}:/usr/local/bin:/opt/homebrew/bin:/home/uwu/.local/bin`,
-        },
+        env,
         maxBuffer: 20 * 1024 * 1024,
         timeout: 180_000,
       },
@@ -299,6 +325,7 @@ function runCli(file: string, args: string[], cwd: string): Promise<CliRunResult
           stdout: stdout ?? "",
           stderr: stderr ?? "",
           code,
+          errorMessage: error ? String((error as Error).message ?? "") : undefined,
         });
       }
     );
@@ -351,27 +378,82 @@ async function generateWithCli(
 ): Promise<{ testConfig: DiscovererTestConfig; agentDocs: string; model: string }> {
   const prompt = discovererCliPrompt(context);
   const candidates = resolveCommandCandidates(target);
-  const cwd = target === "claude" ? "/home/uwu" : REGRESSION_DIR;
+  const cwd = context.workspacePath;
+  const envKeys = readEnvKeys();
+  const runtimeHome = (() => {
+    const preferred = (process.env.HOME ?? "").trim();
+    if (preferred) {
+      try {
+        if (!fs.existsSync(preferred)) {
+          fs.mkdirSync(preferred, { recursive: true });
+        }
+        return preferred;
+      } catch {}
+    }
+    const fallback = path.join(REGRESSION_DIR, "results", "discoverer", "cli_home");
+    if (!fs.existsSync(fallback)) {
+      fs.mkdirSync(fallback, { recursive: true });
+    }
+    return fallback;
+  })();
+  const xdgConfig = path.join(runtimeHome, ".config");
+  const xdgData = path.join(runtimeHome, ".local", "share");
+  if (!fs.existsSync(xdgConfig)) {
+    fs.mkdirSync(xdgConfig, { recursive: true });
+  }
+  if (!fs.existsSync(xdgData)) {
+    fs.mkdirSync(xdgData, { recursive: true });
+  }
 
-  let lastError = "";
+  const envOverrides: Record<string, string> = {
+    HOME: runtimeHome,
+    XDG_CONFIG_HOME: xdgConfig,
+    XDG_DATA_HOME: xdgData,
+  };
+  for (const key of ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const) {
+    const value = envKeys[key]?.trim();
+    if (value) {
+      envOverrides[key] = value;
+    }
+  }
+
+  const attemptErrors: string[] = [];
   for (const command of candidates) {
+    const envStrip = target === "opencode"
+      ? ["OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME", "OPENCODE_CLIENT"]
+      : [];
+
+    const versionCheck = await runCli(command, ["--version"], cwd, envOverrides, envStrip);
+    if (versionCheck.code !== 0) {
+      const reason = versionCheck.stderr.trim() || versionCheck.stdout.trim() || versionCheck.errorMessage || "no output";
+      attemptErrors.push(`${target} command '${command}' is not runnable: ${reason}`);
+      continue;
+    }
+
     const args = target === "claude"
       ? ["--dangerously-skip-permissions", "-p", prompt]
-      : ["run", "--dir", context.workspacePath, prompt];
+      : ["run", "--pure", "--print-logs", "--dir", context.workspacePath, prompt];
 
-    const result = await runCli(command, args, cwd);
-    const raw = [result.stdout, result.stderr]
-      .map((v) => v.trim())
-      .filter((v) => v.length > 0)
-      .join("\n");
+    const result = await runCli(command, args, cwd, envOverrides, envStrip);
+    const stdout = result.stdout.trim();
+    const stderr = result.stderr.trim();
+    const preferredOutput = stdout || stderr;
 
     if (result.code !== 0) {
-      lastError = `${target} command '${command}' failed (${result.code}): ${raw || "no output"}`;
+      const reason = preferredOutput || result.errorMessage || "no output";
+      attemptErrors.push(
+        `${target} command '${command}' failed (${result.code}): ${reason}`
+      );
+      continue;
+    }
+
+    if (!preferredOutput) {
+      attemptErrors.push(`${target} command '${command}' returned success with empty output`);
       continue;
     }
 
     try {
-      const parsed = extractJsonPayload(raw);
+      const parsed = extractJsonPayload(preferredOutput);
       const normalized = normalizeAiOutput(project, parsed);
       return {
         testConfig: {
@@ -385,11 +467,11 @@ async function generateWithCli(
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      lastError = `${target} command '${command}' produced invalid JSON output: ${message}`;
+      attemptErrors.push(`${target} command '${command}' produced invalid JSON output: ${message}`);
     }
   }
 
-  throw new Error(lastError || `${target} CLI generation failed`);
+  throw new Error(attemptErrors.join(" | ") || `${target} CLI generation failed`);
 }
 
 export async function POST(req: NextRequest) {
@@ -501,6 +583,16 @@ export async function POST(req: NextRequest) {
   let docsMode: "created" | "appended" | "unchanged" | "skipped" = "skipped";
   let testsMerge: DiscovererMergeReport | undefined;
 
+  const targetTestsFile = persistTests
+    ? path.join(resolvedTestSavePath || TEST_CASES_DIR, `${project}.json`)
+    : "";
+  const targetDocsFile = persistDocs
+    ? resolveKnowledgeFilePath(project, resolvedDocsSavePath || undefined)
+    : "";
+
+  const testsBeforeContent = targetTestsFile ? readOptionalFileText(targetTestsFile) : null;
+  const docsBeforeContent = targetDocsFile ? readOptionalFileText(targetDocsFile) : null;
+
   if (persistTests) {
     const resolvedTestDir = resolvedTestSavePath || TEST_CASES_DIR;
     if (!fs.existsSync(resolvedTestDir)) {
@@ -543,6 +635,20 @@ export async function POST(req: NextRequest) {
     docsMode = knowledge.mode;
   }
 
+  const historyEntry = recordDiscovererHistory({
+    project,
+    workspacePath: normalizedWorkspace,
+    generationTarget,
+    generationModel,
+    generationWarning: generationWarning || undefined,
+    tests: persistTests && testCasesFile
+      ? { path: testCasesFile, beforeContent: testsBeforeContent }
+      : undefined,
+    docs: persistDocs && knowledgeFile
+      ? { path: knowledgeFile, beforeContent: docsBeforeContent }
+      : undefined,
+  });
+
   return NextResponse.json({
     project,
     workspacePath: normalizedWorkspace,
@@ -565,6 +671,7 @@ export async function POST(req: NextRequest) {
       testsMerge,
       generationModel,
       generationWarning: generationWarning || undefined,
+      historyId: historyEntry?.id,
     },
   });
 }

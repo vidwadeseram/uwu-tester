@@ -635,6 +635,35 @@ function resolveKnowledgeTarget(project: string, customDir?: string): { dir: str
   };
 }
 
+export function resolveKnowledgeFilePath(project: string, customDir?: string): string {
+  return resolveKnowledgeTarget(project, customDir).filePath;
+}
+
+export function upsertKnowledgeIndex(project: string, workspacePath: string, filePath: string): void {
+  const dir = ensureKnowledgeDir();
+  const indexPath = path.join(dir, "index.json");
+  const prev: KnowledgeIndexEntry[] = fs.existsSync(indexPath)
+    ? (JSON.parse(fs.readFileSync(indexPath, "utf-8")) as KnowledgeIndexEntry[])
+    : [];
+
+  const canonicalWorkspace = (() => {
+    try {
+      return fs.realpathSync(workspacePath);
+    } catch {
+      return workspacePath;
+    }
+  })();
+
+  const next = prev.filter((entry) => entry.project !== project);
+  next.push({
+    project,
+    workspacePath: canonicalWorkspace,
+    file: path.resolve(filePath),
+    updatedAt: new Date().toISOString(),
+  });
+  fs.writeFileSync(indexPath, JSON.stringify(next, null, 2));
+}
+
 export function writeKnowledge(project: string, content: string, workspacePath: string, customDir?: string): KnowledgeWriteResult {
   const target = resolveKnowledgeTarget(project, customDir);
 
@@ -663,23 +692,8 @@ export function writeKnowledge(project: string, content: string, workspacePath: 
     mode = "created";
   }
 
-  const indexPath = target.indexPath;
-  const prev: KnowledgeIndexEntry[] =
-    fs.existsSync(indexPath)
-      ? (JSON.parse(fs.readFileSync(indexPath, "utf-8")) as KnowledgeIndexEntry[])
-      : [];
-
-  const canonicalWorkspace = (() => {
-    try {
-      return fs.realpathSync(workspacePath);
-    } catch {
-      return workspacePath;
-    }
-  })();
-
-  const next = prev.filter((p) => p.project !== project);
-  next.push({ project, workspacePath: canonicalWorkspace, file: filePath, updatedAt: new Date().toISOString() });
-  fs.writeFileSync(indexPath, JSON.stringify(next, null, 2));
+  void target.indexPath;
+  upsertKnowledgeIndex(project, workspacePath, filePath);
 
   return { filePath, mode };
 }
