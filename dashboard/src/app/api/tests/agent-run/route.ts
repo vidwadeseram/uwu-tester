@@ -3,6 +3,7 @@ import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getProjectPaths, getReadableProjectPaths } from "@/app/lib/tests-paths";
+import { readSettings } from "@/app/lib/settings";
 
 type AgentTarget = "claude" | "opencode";
 
@@ -26,6 +27,8 @@ interface AgentRun {
 
 const REGRESSION_DIR = path.join(process.cwd(), "..", "regression_tests");
 const MAX_SUMMARY_BYTES = 8192;
+const DEFAULT_TESTS_MODEL = "openai/gpt-5.3-codex";
+const FALLBACK_OPENCODE_MODEL = "opencode/gpt-5-nano";
 
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -140,6 +143,12 @@ function parseSelection(value: unknown): string[] {
     .filter((v) => /^[a-zA-Z0-9_-]+$/.test(v));
 }
 
+function resolveTestsModel(): string {
+  const fromSettings = readSettings().models?.tests?.trim();
+  const fromEnv = process.env.OPENCODE_TEST_MODEL?.trim();
+  return fromSettings || fromEnv || DEFAULT_TESTS_MODEL;
+}
+
 function buildScopeInstruction(workflowIds: string[], caseIds: string[]): string {
   if (workflowIds.length > 0) {
     return `Run only workflows: ${workflowIds.join(", ")}. Also include any required case dependencies.`;
@@ -177,7 +186,7 @@ function buildPrompt(project: string, runId: string, workflowIds: string[], case
   ].join(" ");
 }
 
-function buildAgentShellCommand(target: AgentTarget, prompt: string): string {
+function buildAgentShellCommand(target: AgentTarget, prompt: string, testsModel: string): string {
   if (target === "claude") {
     return `cd /home/uwu && claude --dangerously-skip-permissions -p ${shellQuote(prompt)}`;
   }
@@ -187,7 +196,14 @@ function buildAgentShellCommand(target: AgentTarget, prompt: string): string {
     "[ -z \"$OPENCODE_BIN\" ] && [ -x /home/uwu/.local/bin/opencode ] && OPENCODE_BIN=/home/uwu/.local/bin/opencode",
   ].join("; ");
 
-  const runOpencode = `cd ${shellQuote(REGRESSION_DIR)} && "$OPENCODE_BIN" run --dir ${shellQuote(REGRESSION_DIR)} ${shellQuote(prompt)}`;
+  const runOpencode = [
+    `cd ${shellQuote(REGRESSION_DIR)}`,
+    `REQUESTED_MODEL=${shellQuote(testsModel)}`,
+    `FALLBACK_MODEL=${shellQuote(FALLBACK_OPENCODE_MODEL)}`,
+    "AVAILABLE_MODELS=\"$($OPENCODE_BIN models 2>/dev/null || true)\"",
+    "if printf '%s\\n' \"$AVAILABLE_MODELS\" | grep -Fxq \"$REQUESTED_MODEL\"; then SELECTED_MODEL=\"$REQUESTED_MODEL\"; else SELECTED_MODEL=\"$FALLBACK_MODEL\"; fi",
+    `"$OPENCODE_BIN" run --dir ${shellQuote(REGRESSION_DIR)} --model "$SELECTED_MODEL" ${shellQuote(prompt)}`,
+  ].join(" && ");
   return `${opencodeLookup}; if [ -n "$OPENCODE_BIN" ]; then ${runOpencode}; else echo "opencode not found" >&2; exit 1; fi`;
 }
 
@@ -197,7 +213,8 @@ function spawnBackgroundRun(meta: AgentRun, prompt: string) {
   const exitAbs = path.join(projectPaths.resultsDir, meta.exit_file);
   ensureDir(path.dirname(logAbs));
 
-  const agentCmd = buildAgentShellCommand(meta.target, prompt);
+  const testsModel = resolveTestsModel();
+  const agentCmd = buildAgentShellCommand(meta.target, prompt, testsModel);
   const wrapped = `${agentCmd} > ${shellQuote(logAbs)} 2>&1; code=$?; echo $code > ${shellQuote(exitAbs)}`;
 
   const env = {

@@ -9,9 +9,9 @@ Usage:
   uv run test_runner.py <project_slug> [KEY=VALUE ...]
 
 LLM priority (first available key wins):
-  OPENROUTER_API_KEY  → OpenRouter (model: OPENROUTER_MODEL env, default anthropic/claude-3-5-haiku)
+  OPENROUTER_API_KEY  → OpenRouter (model: OPENROUTER_MODEL env, default openai/gpt-5.3-codex)
   ANTHROPIC_API_KEY   → Anthropic direct (claude-3-5-haiku-20241022)
-  OPENAI_API_KEY      → OpenAI direct (gpt-4o-mini)
+  OPENAI_API_KEY      → OpenAI direct (gpt-5.3-codex)
 
 Any {{PLACEHOLDER}} in task strings is substituted with matching env vars.
 """
@@ -40,6 +40,7 @@ from langchain_openai import ChatOpenAI
 BASE_DIR = Path(__file__).parent
 TEST_CASES_DIR = Path(os.getenv("UWU_TEST_CASES_DIR") or (BASE_DIR / "test_cases"))
 RESULTS_DIR = Path(os.getenv("UWU_RESULTS_DIR") or (BASE_DIR / "results"))
+DEFAULT_TESTS_MODEL = "openai/gpt-5.3-codex"
 
 
 def _env_non_negative_int(name: str, default: int) -> int:
@@ -1208,8 +1209,9 @@ async def main() -> None:
         except Exception:
             pass
 
+        model = saved_tests_model or env.get("OPENROUTER_MODEL", DEFAULT_TESTS_MODEL)
+
         if openrouter_key:
-            model = saved_tests_model or env.get("OPENROUTER_MODEL", "google/gemma-3-27b-it:free")
             if isinstance(model, str) and model.startswith("google/gemma-"):
                 from browser_use.llm.openrouter.serializer import OpenRouterMessageSerializer
 
@@ -1226,7 +1228,7 @@ async def main() -> None:
                 print(f"INFO: Enabled Gemma compatibility mode for {model} (system -> user role remap)")
                 install_json_recovery_patch()
             llm = ChatOpenRouter(model=model, api_key=openrouter_key, timeout=180)
-            alt_model = env.get("OPENROUTER_ALT_MODEL", "google/gemma-3-4b-it:free")
+            alt_model = env.get("OPENROUTER_ALT_MODEL", "google/gemma-3-27b-it:free")
             if alt_model and alt_model != model:
                 fallback_llm = ChatOpenRouter(model=alt_model, api_key=openrouter_key, timeout=180)
             llm_label = f"OpenRouter / {model}"
@@ -1234,8 +1236,14 @@ async def main() -> None:
             llm = ChatAnthropic(model="claude-3-5-haiku-20241022", api_key=anthropic_key, timeout=120, max_tokens=8096)
             llm_label = "Anthropic / claude-3-5-haiku-20241022"
         elif openai_key:
-            llm = ChatOpenAI(model="gpt-4o-mini", api_key=openai_key, timeout=120)
-            llm_label = "OpenAI / gpt-4o-mini"
+            if isinstance(model, str) and model.startswith("openai/"):
+                openai_model = model.split("/", 1)[1]
+            elif isinstance(model, str) and "/" not in model:
+                openai_model = model
+            else:
+                openai_model = DEFAULT_TESTS_MODEL.split("/", 1)[1]
+            llm = ChatOpenAI(model=openai_model, api_key=openai_key, timeout=120)
+            llm_label = f"OpenAI / {openai_model}"
         else:
             print("ERROR: No API key set — add OPENROUTER_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY")
             sys.exit(1)
