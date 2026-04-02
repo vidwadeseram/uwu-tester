@@ -841,14 +841,35 @@ async def run_case_scripted(
 
                 terms_checked = False
                 checkbox_present = False
+                terms_label_text = "I agree to Marx Merchant Portal Terms of Use and have read and acknowledged Privacy Policy"
                 try:
-                    checkbox = page.locator("input[type='checkbox']").first
+                    checkbox = page.get_by_label(re.compile(r"I\s*agree\s*to\s*Marx\s*Merchant\s*Portal\s*Terms\s*of\s*Use.*Privacy\s*Policy", re.IGNORECASE)).first
                     if await checkbox.count() > 0:
                         checkbox_present = True
                         await checkbox.check(timeout=3500)
-                        terms_checked = True
+                        terms_checked = await checkbox.is_checked()
                 except Exception:
                     terms_checked = False
+
+                if not checkbox_present:
+                    try:
+                        terms_checkbox = page.locator("#terms, input[name='terms']").first
+                        if await terms_checkbox.count() > 0:
+                            checkbox_present = True
+                            await terms_checkbox.check(timeout=3500)
+                            terms_checked = await terms_checkbox.is_checked()
+                    except Exception:
+                        terms_checked = False
+
+                if not checkbox_present:
+                    try:
+                        fallback_checkbox = page.locator("input[type='checkbox']").first
+                        if await fallback_checkbox.count() > 0:
+                            checkbox_present = True
+                            await fallback_checkbox.check(timeout=3500)
+                            terms_checked = await fallback_checkbox.is_checked()
+                    except Exception:
+                        terms_checked = False
 
                 if checkbox_present and not terms_checked:
                     passed = False
@@ -889,6 +910,12 @@ async def run_case_scripted(
                 elif success_hint:
                     passed = True
                     detail = "SUCCESS"
+                elif "you must agree to the terms" in visible_text:
+                    passed = False
+                    detail = (
+                        "TERMS_NOT_ACCEPTED: signup blocked by terms validation "
+                        f"(required_label='{terms_label_text}', terms_checked={terms_checked})"
+                    )
                 elif submitted and _is_signup_step(signup_url_after_submit):
                     passed = False
                     detail = (
