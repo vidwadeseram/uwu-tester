@@ -25,6 +25,7 @@ export const dynamic = "force-dynamic";
 
 const REGRESSION_DIR = path.join(process.cwd(), "..", "regression_tests");
 const TEST_CASES_DIR = path.join(REGRESSION_DIR, "test_cases");
+const DISCOVERER_PROMPT_DIR = path.join(REGRESSION_DIR, "results", "discoverer", "cli_prompts");
 
 interface DiscovererRequest {
   workspacePath?: string;
@@ -69,6 +70,12 @@ function resolvePersistPath(raw: string, workspacePath: string): string | null {
   return candidate;
 }
 
+function ensureDir(dirPath: string): void {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
 function readOptionalFileText(filePath: string): string | null {
   try {
     if (!fs.existsSync(filePath)) return null;
@@ -78,6 +85,44 @@ function readOptionalFileText(filePath: string): string | null {
   } catch {
     return null;
   }
+}
+
+function summarizeCliText(raw: string, maxChars = 500): string {
+  const redacted = raw.replace(/args=\[[\s\S]*?\]\s*opencode/gi, "args=[...redacted] opencode");
+  const compact = redacted.replace(/\s+/g, " ").trim();
+  if (!compact) return "";
+  return compact.length > maxChars ? `${compact.slice(0, maxChars)}…` : compact;
+}
+
+function trimErrorMessage(raw: string, maxChars = 420): string {
+  const compact = raw.replace(/\s+/g, " ").trim();
+  if (!compact) return "Discoverer generation failed";
+  return compact.length > maxChars ? `${compact.slice(0, maxChars)}…` : compact;
+}
+
+function writeCliPromptFile(target: "claude" | "opencode", project: string, prompt: string): string {
+  ensureDir(DISCOVERER_PROMPT_DIR);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "").replace("Z", "Z");
+  const token = Math.random().toString(36).slice(2, 8);
+  const filePath = path.join(DISCOVERER_PROMPT_DIR, `${target}-${project}-${stamp}-${token}.txt`);
+  fs.writeFileSync(filePath, prompt);
+  return filePath;
+}
+
+function parseCliJson(stdout: string, stderr: string): unknown {
+  const candidates = [stdout.trim(), stderr.trim()].filter((value) => value.length > 0);
+  let lastError: unknown;
+  for (const candidate of candidates) {
+    try {
+      return extractJsonPayload(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new Error("Model output was not valid JSON");
 }
 
 function compactWorkspaceContext(ctx: ReturnType<typeof collectWorkspaceContext>) {
@@ -377,6 +422,7 @@ async function generateWithCli(
   context: ReturnType<typeof collectWorkspaceContext>
 ): Promise<{ testConfig: DiscovererTestConfig; agentDocs: string; model: string }> {
   const prompt = discovererCliPrompt(context);
+  const promptFile = writeCliPromptFile(target, project, prompt);
   const candidates = resolveCommandCandidates(target);
   const cwd = context.workspacePath;
   const envKeys = readEnvKeys();
@@ -430,48 +476,78 @@ async function generateWithCli(
       continue;
     }
 
-    const args = target === "claude"
-      ? ["--dangerously-skip-permissions", "-p", prompt]
-      : ["run", "--pure", "--print-logs", "--dir", context.workspacePath, prompt];
+    const variants = target === "claude"
+      ? [
+          {
+            name: "default",
+            args: ["--dangerously-skip-permissions", "-p", prompt],
+          },
+        ]
+      : [
+          {
+            name: "default",
+            args: [
+              "run",
+              "--dir",
+              context.workspacePath,
+              "-f",
+              promptFile,
+              "Read the attached file and output ONLY the final JSON object requested there.",
+            ],
+          },
+          {
+            name: "pure",
+            args: [
+              "run",
+              "--pure",
+              "--dir",
+              context.workspacePath,
+              "-f",
+              promptFile,
+              "Read the attached file and output ONLY the final JSON object requested there.",
+            ],
+          },
+        ];
 
-    const result = await runCli(command, args, cwd, envOverrides, envStrip);
-    const stdout = result.stdout.trim();
-    const stderr = result.stderr.trim();
-    const preferredOutput = stdout || stderr;
+    for (const variant of variants) {
+      const result = await runCli(command, variant.args, cwd, envOverrides, envStrip);
+      const stdout = result.stdout.trim();
+      const stderr = result.stderr.trim();
 
-    if (result.code !== 0) {
-      const reason = preferredOutput || result.errorMessage || "no output";
-      attemptErrors.push(
-        `${target} command '${command}' failed (${result.code}): ${reason}`
-      );
-      continue;
-    }
+      if (result.code !== 0) {
+        const reason = summarizeCliText(stdout || stderr || result.errorMessage || "no output");
+        attemptErrors.push(
+          `${target} command '${command}' [${variant.name}] failed (${result.code}): ${reason || "no output"}`
+        );
+        continue;
+      }
 
-    if (!preferredOutput) {
-      attemptErrors.push(`${target} command '${command}' returned success with empty output`);
-      continue;
-    }
+      if (!stdout && !stderr) {
+        attemptErrors.push(`${target} command '${command}' [${variant.name}] returned success with empty output`);
+        continue;
+      }
 
-    try {
-      const parsed = extractJsonPayload(preferredOutput);
-      const normalized = normalizeAiOutput(project, parsed);
-      return {
-        testConfig: {
-          project,
-          description: normalized.description,
-          test_cases: normalized.test_cases,
-          workflows: normalized.workflows,
-        },
-        agentDocs: normalized.agent_docs,
-        model: `cli/${target}`,
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      attemptErrors.push(`${target} command '${command}' produced invalid JSON output: ${message}`);
+      try {
+        const parsed = parseCliJson(stdout, stderr);
+        const normalized = normalizeAiOutput(project, parsed);
+        return {
+          testConfig: {
+            project,
+            description: normalized.description,
+            test_cases: normalized.test_cases,
+            workflows: normalized.workflows,
+          },
+          agentDocs: normalized.agent_docs,
+          model: `cli/${target}`,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        attemptErrors.push(`${target} command '${command}' [${variant.name}] produced invalid JSON output: ${trimErrorMessage(message, 240)}`);
+      }
     }
   }
 
-  throw new Error(attemptErrors.join(" | ") || `${target} CLI generation failed`);
+  throw new Error(trimErrorMessage(attemptErrors.join(" | ") || `${target} CLI generation failed`, 900));
 }
 
 export async function POST(req: NextRequest) {
@@ -572,7 +648,7 @@ export async function POST(req: NextRequest) {
     generatedTestConfig = buildTestConfigFromContext(project, context);
     agentDocs = buildAgentDocs(project, context);
     generationModel = "fallback/local-context";
-    generationWarning = `${message}. Used local workspace fallback generation.`;
+    generationWarning = `${trimErrorMessage(message)}. Used local workspace fallback generation.`;
   }
 
   let effectiveTestConfig = generatedTestConfig;
