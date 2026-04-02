@@ -132,6 +132,7 @@ interface DiscoverRun {
   sourceUrl?: string;
   persistTests: boolean;
   persistDocs: boolean;
+  specSavePath?: string;
   testSavePath?: string;
   docsSavePath?: string;
   status: DiscoverRunStatus;
@@ -214,6 +215,7 @@ export default function DiscovererPage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [persistTests, setPersistTests] = useState(true);
   const [persistDocs, setPersistDocs] = useState(true);
+  const [specSavePath, setSpecSavePath] = useState("");
   const [testSavePath, setTestSavePath] = useState("");
   const [docsSavePath, setDocsSavePath] = useState("");
   const [loading, setLoading] = useState(false);
@@ -328,6 +330,7 @@ export default function DiscovererPage() {
           sourceUrl,
           persistTests,
           persistDocs,
+          specSavePath: specSavePath || undefined,
           testSavePath: testSavePath || undefined,
           docsSavePath: docsSavePath || undefined,
         }),
@@ -353,6 +356,7 @@ export default function DiscovererPage() {
               sourceUrl,
               persistTests,
               persistDocs,
+              specSavePath: specSavePath || undefined,
               testSavePath: testSavePath || undefined,
               docsSavePath: docsSavePath || undefined,
               status: "running",
@@ -369,7 +373,7 @@ export default function DiscovererPage() {
     } finally {
       setLoading(false);
     }
-  }, [canRun, workspacePath, project, sourceUrl, persistTests, persistDocs, testSavePath, docsSavePath, loadDiscoverRuns]);
+  }, [canRun, workspacePath, project, sourceUrl, persistTests, persistDocs, specSavePath, testSavePath, docsSavePath, loadDiscoverRuns]);
 
   const loadHistory = useCallback(async (slug: string) => {
     if (!slug.trim()) {
@@ -652,7 +656,7 @@ export default function DiscovererPage() {
           </div>
 
           <div className="space-y-1">
-            <label htmlFor="discoverer-source-url" className="text-xs" style={{ color: "#94a3b8" }}>Target URL (Playwright spec source)</label>
+            <label htmlFor="discoverer-source-url" className="text-xs" style={{ color: "#94a3b8" }}>Web URL</label>
             <input
               id="discoverer-source-url"
               value={sourceUrl}
@@ -665,6 +669,36 @@ export default function DiscovererPage() {
         </div>
 
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
+              Save generated Playwright spec to:
+            </span>
+            <div className="flex items-center gap-2">
+              <FolderTreePicker
+                value={specSavePath}
+                onSelect={setSpecSavePath}
+                compact
+                placeholder="Default (regression_tests/specs)"
+              />
+              {specSavePath && (
+                <button
+                  type="button"
+                  onClick={() => setSpecSavePath("")}
+                  className="text-[10px] px-1.5 py-0.5 rounded"
+                  style={{ color: "#94a3b8", background: "rgba(30,45,74,0.5)", border: "1px solid #1e2d4a" }}
+                  title="Reset to default location"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+          {specSavePath && (
+            <div className="text-[11px] font-mono ml-6 truncate" style={{ color: "#4a5568" }} title={specSavePath}>
+              {specSavePath}
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center gap-3">
             <label className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
               <input type="checkbox" checked={persistTests} onChange={(e) => setPersistTests(e.target.checked)} />

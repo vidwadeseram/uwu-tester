@@ -400,6 +400,18 @@ interface WorkspaceOption {
   kind: "group" | "project";
 }
 
+interface DbFileInfo {
+  path: string;
+  name: string;
+  bytes: number;
+  updatedAt: string;
+}
+
+interface DbRowItem {
+  __rowid__: number;
+  [key: string]: unknown;
+}
+
 function toWorkspaceOptions(data: ProjectsData): WorkspaceOption[] {
   const options: WorkspaceOption[] = [];
   for (const group of data.groups ?? []) {
@@ -1193,6 +1205,27 @@ export default function TestsPage() {
   const [runMode, setRunMode] = useState<RunSelectionMode>("all");
   const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([]);
   const [selectedCaseIds, setSelectedCaseIds] = useState<string[]>([]);
+
+  const [specPath, setSpecPath] = useState("");
+  const [specTargetUrl, setSpecTargetUrl] = useState("");
+  const [specRunning, setSpecRunning] = useState(false);
+  const [specRunStatus, setSpecRunStatus] = useState("");
+
+  const [dbSearch, setDbSearch] = useState("");
+  const [dbLoading, setDbLoading] = useState(false);
+  const [dbList, setDbList] = useState<DbFileInfo[]>([]);
+  const [dbNextOffset, setDbNextOffset] = useState<number | null>(0);
+  const [selectedDbPath, setSelectedDbPath] = useState("");
+  const [dbTables, setDbTables] = useState<string[]>([]);
+  const [selectedTable, setSelectedTable] = useState("");
+  const [rowSearch, setRowSearch] = useState("");
+  const [rowLoading, setRowLoading] = useState(false);
+  const [dbRows, setDbRows] = useState<DbRowItem[]>([]);
+  const [rowNextOffset, setRowNextOffset] = useState<number | null>(0);
+  const [selectedRowIds, setSelectedRowIds] = useState<number[]>([]);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupStatus, setCleanupStatus] = useState("");
+
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const agentRunStatusRef = useRef<Record<string, AgentRun["status"]>>({});
 
@@ -1568,6 +1601,185 @@ export default function TestsPage() {
     [selectedProject, pollRunStatus, loadAgentRuns]
   );
 
+  const workspaceForCleanup = config?.workspace_path ?? "";
+
+  const loadDatabases = useCallback(async (reset: boolean) => {
+    if (!workspaceForCleanup) return;
+    const offset = reset ? 0 : (dbNextOffset ?? 0);
+    if (!reset && dbNextOffset === null) return;
+    setDbLoading(true);
+    try {
+      const params = new URLSearchParams({
+        action: "databases",
+        workspacePath: workspaceForCleanup,
+        limit: "30",
+        offset: String(offset),
+      });
+      if (dbSearch.trim()) params.set("search", dbSearch.trim());
+      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setCleanupStatus(data.error ?? "Failed to load databases");
+        return;
+      }
+      const items = Array.isArray(data.items) ? (data.items as DbFileInfo[]) : [];
+      setDbList((prev) => (reset ? items : [...prev, ...items]));
+      setDbNextOffset(typeof data.nextOffset === "number" ? data.nextOffset : null);
+    } catch {
+      setCleanupStatus("Failed to load databases");
+    } finally {
+      setDbLoading(false);
+    }
+  }, [workspaceForCleanup, dbNextOffset, dbSearch]);
+
+  const loadTables = useCallback(async (dbPath: string) => {
+    if (!workspaceForCleanup || !dbPath) return;
+    try {
+      const params = new URLSearchParams({ action: "tables", workspacePath: workspaceForCleanup, dbPath });
+      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setCleanupStatus(data.error ?? "Failed to load tables");
+        return;
+      }
+      const tables = Array.isArray(data.tables) ? data.tables.filter((v: unknown): v is string => typeof v === "string") : [];
+      setDbTables(tables);
+      setSelectedTable((prev) => (prev && tables.includes(prev) ? prev : (tables[0] ?? "")));
+    } catch {
+      setCleanupStatus("Failed to load tables");
+    }
+  }, [workspaceForCleanup]);
+
+  const loadRows = useCallback(async (reset: boolean) => {
+    if (!workspaceForCleanup || !selectedDbPath || !selectedTable) return;
+    const offset = reset ? 0 : (rowNextOffset ?? 0);
+    if (!reset && rowNextOffset === null) return;
+    setRowLoading(true);
+    try {
+      const params = new URLSearchParams({
+        action: "rows",
+        workspacePath: workspaceForCleanup,
+        dbPath: selectedDbPath,
+        table: selectedTable,
+        limit: "50",
+        offset: String(offset),
+      });
+      if (rowSearch.trim()) params.set("search", rowSearch.trim());
+      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setCleanupStatus(data.error ?? "Failed to load rows");
+        return;
+      }
+      const rows = Array.isArray(data.rows) ? (data.rows as DbRowItem[]) : [];
+      setDbRows((prev) => (reset ? rows : [...prev, ...rows]));
+      setRowNextOffset(typeof data.nextOffset === "number" ? data.nextOffset : null);
+    } catch {
+      setCleanupStatus("Failed to load rows");
+    } finally {
+      setRowLoading(false);
+    }
+  }, [workspaceForCleanup, selectedDbPath, selectedTable, rowNextOffset, rowSearch]);
+
+  const runDbCleanup = useCallback(async () => {
+    if (!workspaceForCleanup || !selectedDbPath || !selectedTable || selectedRowIds.length === 0) return;
+    setCleanupBusy(true);
+    setCleanupStatus("");
+    try {
+      const res = await fetch("/api/tests/db-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete",
+          workspacePath: workspaceForCleanup,
+          dbPath: selectedDbPath,
+          table: selectedTable,
+          rowids: selectedRowIds,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCleanupStatus(data.error ?? "Cleanup failed");
+        return;
+      }
+      const deleted = Number(data.deleted ?? 0);
+      setCleanupStatus(`Deleted ${deleted} row${deleted === 1 ? "" : "s"} from ${selectedTable}`);
+      setSelectedRowIds([]);
+      void loadRows(true);
+    } catch {
+      setCleanupStatus("Cleanup failed");
+    } finally {
+      setCleanupBusy(false);
+    }
+  }, [workspaceForCleanup, selectedDbPath, selectedTable, selectedRowIds, loadRows]);
+
+  const runPlaywrightSpec = useCallback(async () => {
+    if (!selectedProject) return;
+    setSpecRunning(true);
+    setSpecRunStatus("");
+    try {
+      const res = await fetch(`/api/tests/spec-run?project=${encodeURIComponent(selectedProject)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          specPath: specPath.trim() || undefined,
+          targetUrl: specTargetUrl.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSpecRunStatus(data.error ?? "Spec run failed");
+        return;
+      }
+      const passed = data.passed === true;
+      setSpecRunStatus(`${passed ? "PASS" : "FAIL"}: ${String(data.summary ?? "Spec run completed")}`);
+      await loadResults(selectedProject);
+    } catch {
+      setSpecRunStatus("Spec run failed");
+    } finally {
+      setSpecRunning(false);
+    }
+  }, [selectedProject, specPath, specTargetUrl, loadResults]);
+
+  useEffect(() => {
+    if (!selectedProject) return;
+    setSpecRunStatus("");
+    setSpecPath("");
+    setSpecTargetUrl("");
+  }, [selectedProject]);
+
+  useEffect(() => {
+    setDbList([]);
+    setDbNextOffset(0);
+    setSelectedDbPath("");
+    setDbTables([]);
+    setSelectedTable("");
+    setDbRows([]);
+    setRowNextOffset(0);
+    setSelectedRowIds([]);
+    setCleanupStatus("");
+    if (!workspaceForCleanup) return;
+    void loadDatabases(true);
+  }, [workspaceForCleanup, dbSearch, loadDatabases]);
+
+  useEffect(() => {
+    setDbTables([]);
+    setSelectedTable("");
+    setDbRows([]);
+    setRowNextOffset(0);
+    setSelectedRowIds([]);
+    if (!selectedDbPath) return;
+    void loadTables(selectedDbPath);
+  }, [selectedDbPath, loadTables]);
+
+  useEffect(() => {
+    setDbRows([]);
+    setRowNextOffset(0);
+    setSelectedRowIds([]);
+    if (!selectedTable) return;
+    void loadRows(true);
+  }, [selectedTable, rowSearch, loadRows]);
+
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
@@ -1839,6 +2051,52 @@ export default function TestsPage() {
                   Effective run order: {resolvedRunCaseIds.length > 0 ? resolvedRunCaseIds.join(" → ") : "None selected"}
                 </p>
 
+                <div className="rounded p-3 space-y-2" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                      Playwright Spec Run (Headless)
+                    </span>
+                    {specRunning && (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2">
+                        <path d="M21 12a9 9 0 1 1-9-9" />
+                      </svg>
+                    )}
+                  </div>
+                  <p className="text-xs" style={{ color: "#64748b" }}>
+                    Runs a generated Python Playwright spec file, records video artifacts, and stores pass/fail in Recent Runs.
+                  </p>
+                  <input
+                    className="w-full px-3 py-2 rounded text-xs font-mono"
+                    style={INPUT_STYLE}
+                    value={specPath}
+                    onChange={(e) => setSpecPath(e.target.value)}
+                    placeholder={`Default: regression_tests/specs/${selectedProject}.spec.py`}
+                  />
+                  <input
+                    className="w-full px-3 py-2 rounded text-xs font-mono"
+                    style={INPUT_STYLE}
+                    value={specTargetUrl}
+                    onChange={(e) => setSpecTargetUrl(e.target.value)}
+                    placeholder="Optional override URL for this run"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void runPlaywrightSpec()}
+                      disabled={specRunning}
+                      className="px-2.5 py-1.5 rounded text-xs font-medium"
+                      style={BTN(!specRunning, "#22c55e")}
+                    >
+                      {specRunning ? "Running spec…" : "Run Playwright Spec"}
+                    </button>
+                  </div>
+                  {specRunStatus && (
+                    <div className="text-xs px-2 py-1 rounded" style={{ color: specRunStatus.startsWith("PASS") ? "#00ff88" : "#f87171", background: "rgba(15,23,42,0.7)", border: "1px solid rgba(30,45,74,0.7)" }}>
+                      {specRunStatus}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setMcpModal("api")}
@@ -1864,6 +2122,157 @@ export default function TestsPage() {
                     <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" /></svg>
                     Test via Opencode
                   </button>
+                </div>
+
+                <div className="rounded p-3 space-y-3" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                      Pre-run DB Cleanup (row-wise)
+                    </span>
+                    {cleanupBusy && (
+                      <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2">
+                        <path d="M21 12a9 9 0 1 1-9-9" />
+                      </svg>
+                    )}
+                  </div>
+                  <p className="text-xs" style={{ color: "#64748b" }}>
+                    Select a DB file, choose a table, search rows, and check only rows you want deleted before test runs.
+                  </p>
+                  {!workspaceForCleanup ? (
+                    <div className="text-xs px-2 py-1 rounded" style={{ color: "#fbbf24", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)" }}>
+                      This project has no workspace_path yet, so DB cleanup is unavailable.
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        className="w-full px-3 py-2 rounded text-xs"
+                        style={INPUT_STYLE}
+                        value={dbSearch}
+                        onChange={(e) => setDbSearch(e.target.value)}
+                        placeholder="Search database files..."
+                      />
+
+                      <div className="max-h-36 overflow-y-auto space-y-1 rounded p-2" style={{ background: "rgba(2,6,23,0.4)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                        {dbList.map((db) => (
+                          <button
+                            key={db.path}
+                            type="button"
+                            onClick={() => setSelectedDbPath(db.path)}
+                            className="w-full text-left px-2 py-1.5 rounded"
+                            style={{
+                              background: selectedDbPath === db.path ? "rgba(0,212,255,0.12)" : "rgba(30,45,74,0.28)",
+                              border: `1px solid ${selectedDbPath === db.path ? "rgba(0,212,255,0.35)" : "rgba(30,45,74,0.6)"}`,
+                              color: selectedDbPath === db.path ? "#67e8f9" : "#94a3b8",
+                            }}
+                            title={db.path}
+                          >
+                            <div className="text-xs font-mono truncate">{db.name}</div>
+                            <div className="text-[11px] truncate" style={{ color: "#64748b" }}>{db.path}</div>
+                          </button>
+                        ))}
+                        {dbLoading && <div className="text-xs" style={{ color: "#64748b" }}>Loading databases…</div>}
+                        {!dbLoading && dbList.length === 0 && <div className="text-xs" style={{ color: "#64748b" }}>No SQLite databases found.</div>}
+                      </div>
+                      {dbNextOffset !== null && (
+                        <button type="button" onClick={() => void loadDatabases(false)} className="px-2 py-1 rounded text-xs" style={BTN(!dbLoading, "#94a3b8")}>
+                          Load more DBs
+                        </button>
+                      )}
+
+                      {selectedDbPath && (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {dbTables.map((table) => (
+                              <button
+                                key={table}
+                                type="button"
+                                onClick={() => setSelectedTable(table)}
+                                className="px-2 py-1 rounded text-xs font-mono"
+                                style={BTN(selectedTable === table, "#a855f7")}
+                              >
+                                {table}
+                              </button>
+                            ))}
+                          </div>
+
+                          {selectedTable && (
+                            <>
+                              <input
+                                className="w-full px-3 py-2 rounded text-xs"
+                                style={INPUT_STYLE}
+                                value={rowSearch}
+                                onChange={(e) => setRowSearch(e.target.value)}
+                                placeholder="Search rows..."
+                              />
+                              <div className="max-h-52 overflow-y-auto rounded" style={{ border: "1px solid rgba(30,45,74,0.6)" }}>
+                                <table className="w-full text-xs">
+                                  <thead style={{ background: "rgba(15,23,42,0.8)", color: "#94a3b8" }}>
+                                    <tr>
+                                      <th className="p-2 text-left">Delete</th>
+                                      <th className="p-2 text-left">rowid</th>
+                                      <th className="p-2 text-left">Row preview</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {dbRows.map((row) => {
+                                      const rowid = Number(row.__rowid__);
+                                      const checked = selectedRowIds.includes(rowid);
+                                      const preview = Object.entries(row)
+                                        .filter(([key]) => key !== "__rowid__")
+                                        .slice(0, 4)
+                                        .map(([key, value]) => `${key}=${String(value)}`)
+                                        .join(" · ");
+                                      return (
+                                        <tr key={`${selectedTable}-${rowid}`} style={{ borderTop: "1px solid rgba(30,45,74,0.4)" }}>
+                                          <td className="p-2">
+                                            <input
+                                              type="checkbox"
+                                              checked={checked}
+                                              onChange={(e) => {
+                                                setSelectedRowIds((prev) =>
+                                                  e.target.checked ? (prev.includes(rowid) ? prev : [...prev, rowid]) : prev.filter((id) => id !== rowid)
+                                                );
+                                              }}
+                                            />
+                                          </td>
+                                          <td className="p-2 font-mono" style={{ color: "#e2e8f0" }}>{rowid}</td>
+                                          <td className="p-2" style={{ color: "#94a3b8" }}>{preview || "(empty row)"}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                                {rowLoading && <div className="p-2 text-xs" style={{ color: "#64748b" }}>Loading rows…</div>}
+                              </div>
+
+                              <div className="flex flex-wrap gap-2 items-center">
+                                {rowNextOffset !== null && (
+                                  <button type="button" onClick={() => void loadRows(false)} className="px-2 py-1 rounded text-xs" style={BTN(!rowLoading, "#94a3b8")}>
+                                    Load more rows
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => void runDbCleanup()}
+                                  disabled={cleanupBusy || selectedRowIds.length === 0}
+                                  className="px-2.5 py-1.5 rounded text-xs font-medium"
+                                  style={BTN(!cleanupBusy && selectedRowIds.length > 0, "#f97316")}
+                                >
+                                  Delete selected rows ({selectedRowIds.length})
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {cleanupStatus && (
+                    <div className="text-xs px-2 py-1 rounded" style={{ color: cleanupStatus.startsWith("Deleted") ? "#00ff88" : "#f87171", background: "rgba(15,23,42,0.7)", border: "1px solid rgba(30,45,74,0.7)" }}>
+                      {cleanupStatus}
+                    </div>
+                  )}
                 </div>
               </div>
 

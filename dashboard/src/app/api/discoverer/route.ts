@@ -32,6 +32,7 @@ interface DiscovererRequest {
   sourceUrl?: string;
   persistTests?: boolean;
   persistDocs?: boolean;
+  specSavePath?: string;
   testSavePath?: string;
   docsSavePath?: string;
   generationTarget?: "api" | "claude" | "opencode";
@@ -49,6 +50,16 @@ interface CliRunResult {
   stderr: string;
   code: number;
   errorMessage?: string;
+}
+
+interface FetchedWebContext {
+  finalUrl: string;
+  status: number;
+  title: string;
+  description: string;
+  headings: string[];
+  links: string[];
+  excerpt: string;
 }
 
 function normalizeForCompare(input: string): string {
@@ -135,6 +146,110 @@ function writeCliPromptFile(target: "claude" | "opencode", project: string, prom
   const filePath = path.join(DISCOVERER_PROMPT_DIR, `${target}-${project}-${stamp}-${token}.txt`);
   fs.writeFileSync(filePath, prompt);
   return filePath;
+}
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<!--([\s\S]*?)-->/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractFirstMatch(html: string, regex: RegExp): string {
+  const match = html.match(regex);
+  if (!match?.[1]) return "";
+  return stripTags(match[1]).slice(0, 240);
+}
+
+function extractHeadings(html: string): string[] {
+  const headings: string[] = [];
+  const regex = /<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi;
+  let match = regex.exec(html);
+  while (match && headings.length < 12) {
+    const value = stripTags(match[1]);
+    if (value) headings.push(value.slice(0, 180));
+    match = regex.exec(html);
+  }
+  return headings;
+}
+
+function extractLinks(html: string): string[] {
+  const links: string[] = [];
+  const regex = /<a[^>]*href=["']([^"']+)["'][^>]*>/gi;
+  let match = regex.exec(html);
+  while (match && links.length < 20) {
+    const href = (match[1] ?? "").trim();
+    if (href) links.push(href.slice(0, 280));
+    match = regex.exec(html);
+  }
+  return Array.from(new Set(links));
+}
+
+async function fetchWebContext(sourceUrl: string): Promise<FetchedWebContext> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(sourceUrl, {
+      method: "GET",
+      redirect: "follow",
+      cache: "no-store",
+      signal: controller.signal,
+      headers: {
+        "user-agent": "uwu-code-discoverer/1.0",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+
+    const html = await res.text();
+    if (!html.trim()) {
+      throw new Error("URL returned empty content");
+    }
+
+    const title = extractFirstMatch(html, /<title[^>]*>([\s\S]*?)<\/title>/i);
+    const description = extractFirstMatch(html, /<meta[^>]+name=["']description["'][^>]+content=["']([\s\S]*?)["'][^>]*>/i);
+    const excerpt = stripTags(html).slice(0, 3000);
+
+    return {
+      finalUrl: res.url,
+      status: res.status,
+      title,
+      description,
+      headings: extractHeadings(html),
+      links: extractLinks(html),
+      excerpt,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to fetch source URL content: ${trimErrorMessage(message, 280)}`);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function webContextBlock(web: FetchedWebContext): string {
+  return [
+    "Fetched web URL context:",
+    JSON.stringify(
+      {
+        finalUrl: web.finalUrl,
+        status: web.status,
+        title: web.title,
+        description: web.description,
+        headings: web.headings,
+        links: web.links,
+        excerpt: web.excerpt,
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
 }
 
 function parseCliJson(stdout: string, stderr: string): unknown {
@@ -277,7 +392,7 @@ function normalizeAiOutput(project: string, raw: unknown): DiscovererAiOutput {
 async function generateWithModel(
   project: string,
   context: ReturnType<typeof collectWorkspaceContext>,
-  options?: { sourceUrl?: string; spec?: string }
+  options?: { sourceUrl?: string; spec?: string; webContext?: FetchedWebContext }
 ): Promise<{ testConfig: DiscovererTestConfig; agentDocs: string; model: string }> {
   const keys = readEnvKeys();
   const openrouterKey = keys.OPENROUTER_API_KEY;
@@ -302,6 +417,7 @@ async function generateWithModel(
     "- Do not output markdown fences. Output JSON only.",
     "- case_ids in workflows must reference generated test case ids.",
     options?.sourceUrl ? `Target URL to validate with Playwright MCP/spec: ${options.sourceUrl}` : "",
+    options?.webContext ? webContextBlock(options.webContext) : "",
     options?.spec ? "Use this Playwright exploration spec as primary source of truth before workspace context:" : "",
     options?.spec ?? "",
     "Workspace context:",
@@ -363,7 +479,8 @@ async function generateWithModel(
 async function generateSpecWithModel(
   _project: string,
   sourceUrl: string,
-  context: ReturnType<typeof collectWorkspaceContext>
+  context: ReturnType<typeof collectWorkspaceContext>,
+  webContext: FetchedWebContext,
 ): Promise<{ spec: string; model: string }> {
   const keys = readEnvKeys();
   const openrouterKey = keys.OPENROUTER_API_KEY;
@@ -373,20 +490,23 @@ async function generateSpecWithModel(
 
   const model = discovererApiModel();
   const prompt = [
-    "You are Discoverer running a Playwright-MCP-first planning pass.",
-    "Create a concise markdown spec for E2E generation from the target URL.",
-    "The output MUST be markdown (no code fences) with these sections:",
-    "# Discoverer Playwright Spec",
-    "## Target URL",
-    "## Page map",
-    "## Critical user journeys",
-    "## Assertions",
-    "## Test data assumptions",
+    "You are Discoverer running a Playwright-first implementation pass.",
+    "Create ONE runnable Python Playwright script (async API) for the target URL.",
+    "Output MUST be raw Python source code only (no markdown, no fences).",
+    "Required behavior:",
+    "- Use async_playwright and launch Chromium headless.",
+    "- Use context = browser.new_context(record_video_dir=recording_dir) where recording_dir comes from UWU_SPEC_RECORDING_DIR env var if present.",
+    "- Use source URL from UWU_SPEC_TARGET_URL env var with fallback to the URL below.",
+    "- Validate at least one critical user journey and assert deterministic outcomes.",
+    "- Print a final line as: UWU_SPEC_RESULT={\"passed\": true|false, \"summary\": \"...\"}",
+    "- Exit with code 0 only when passed is true.",
+    "- Close context/browser in finally blocks.",
     "Rules:",
     "- Prioritize robust selectors and deterministic assertions.",
     "- Include API/network failure coverage and visible error states.",
     "- Keep it specific to this app and URL.",
     `Target URL: ${sourceUrl}`,
+    webContextBlock(webContext),
     "Workspace context:",
     JSON.stringify(compactWorkspaceContext(context), null, 2),
   ].join("\n");
@@ -406,7 +526,7 @@ async function generateSpecWithModel(
       messages: [
         {
           role: "system",
-          content: "You produce Playwright test planning specs in markdown.",
+          content: "You produce executable Python Playwright scripts for deterministic headless validation.",
         },
         {
           role: "user",
@@ -503,7 +623,7 @@ function resolveCommandCandidates(target: "claude" | "opencode"): string[] {
 
 function discovererCliPrompt(
   context: ReturnType<typeof collectWorkspaceContext>,
-  options?: { sourceUrl?: string; spec?: string }
+  options?: { sourceUrl?: string; spec?: string; webContext?: FetchedWebContext }
 ): string {
   return [
     "You are Discoverer. Generate realistic, workspace-specific QA artifacts.",
@@ -520,6 +640,7 @@ function discovererCliPrompt(
     "- Do not output markdown fences. Output JSON only.",
     "- case_ids in workflows must reference generated test case ids.",
     options?.sourceUrl ? `Target URL to validate with Playwright MCP/spec: ${options.sourceUrl}` : "",
+    options?.webContext ? webContextBlock(options.webContext) : "",
     options?.spec ? "Use this Playwright exploration spec as primary source of truth before workspace context:" : "",
     options?.spec ?? "",
     "Workspace context:",
@@ -531,7 +652,7 @@ async function generateWithCli(
   target: "claude" | "opencode",
   project: string,
   context: ReturnType<typeof collectWorkspaceContext>,
-  options?: { sourceUrl?: string; spec?: string }
+  options?: { sourceUrl?: string; spec?: string; webContext?: FetchedWebContext }
 ): Promise<{ testConfig: DiscovererTestConfig; agentDocs: string; model: string }> {
   const prompt = discovererCliPrompt(context, options);
   const promptFile = writeCliPromptFile(target, project, prompt);
@@ -669,19 +790,23 @@ async function generateSpecWithCli(
   target: "claude" | "opencode",
   project: string,
   sourceUrl: string,
-  context: ReturnType<typeof collectWorkspaceContext>
+  context: ReturnType<typeof collectWorkspaceContext>,
+  webContext: FetchedWebContext,
 ): Promise<{ spec: string; model: string }> {
   const prompt = [
-    "You are Discoverer running a Playwright-MCP-first planning pass.",
-    "Create a concise markdown spec for E2E generation from the target URL.",
-    "Output markdown only (no code fences) with sections:",
-    "# Discoverer Playwright Spec",
-    "## Target URL",
-    "## Page map",
-    "## Critical user journeys",
-    "## Assertions",
-    "## Test data assumptions",
+    "You are Discoverer running a Playwright-first implementation pass.",
+    "Create ONE runnable Python Playwright script (async API) for the target URL.",
+    "Output MUST be raw Python source code only (no markdown, no fences).",
+    "Required behavior:",
+    "- Use async_playwright and launch Chromium headless.",
+    "- Use context = browser.new_context(record_video_dir=recording_dir) where recording_dir comes from UWU_SPEC_RECORDING_DIR env var if present.",
+    "- Use source URL from UWU_SPEC_TARGET_URL env var with fallback to the URL below.",
+    "- Validate at least one critical user journey and assert deterministic outcomes.",
+    "- Print a final line as: UWU_SPEC_RESULT={\"passed\": true|false, \"summary\": \"...\"}",
+    "- Exit with code 0 only when passed is true.",
+    "- Close context/browser in finally blocks.",
     `Target URL: ${sourceUrl}`,
+    webContextBlock(webContext),
     "Workspace context:",
     JSON.stringify(compactWorkspaceContext(context), null, 2),
   ].join("\n");
@@ -733,8 +858,11 @@ async function generateSpecWithCli(
       continue;
     }
 
+    const fenced = output.match(/```(?:python)?\s*([\s\S]*?)```/i);
+    const normalizedOutput = (fenced?.[1] ?? output).trim();
+
     return {
-      spec: output,
+      spec: normalizedOutput,
       model: `cli/${target}/${configuredModel}`,
     };
   }
@@ -771,6 +899,9 @@ export async function POST(req: NextRequest) {
   if (parsed.persistDocs !== undefined && typeof parsed.persistDocs !== "boolean") {
     return NextResponse.json({ error: "persistDocs must be a boolean" }, { status: 400 });
   }
+  if (parsed.specSavePath !== undefined && typeof parsed.specSavePath !== "string") {
+    return NextResponse.json({ error: "specSavePath must be a string" }, { status: 400 });
+  }
   if (parsed.testSavePath !== undefined && typeof parsed.testSavePath !== "string") {
     return NextResponse.json({ error: "testSavePath must be a string" }, { status: 400 });
   }
@@ -805,14 +936,23 @@ export async function POST(req: NextRequest) {
 
   const persistTests = parsed.persistTests !== false;
   const persistDocs = parsed.persistDocs !== false;
+  const specSavePath = (parsed.specSavePath ?? "").trim();
   const testSavePath = (parsed.testSavePath ?? "").trim();
   const docsSavePath = (parsed.docsSavePath ?? "").trim();
   const generationTarget = parsed.generationTarget ?? "api";
+  const resolvedSpecSavePath = resolvePersistPath(specSavePath, normalizedWorkspace);
   const resolvedTestSavePath = resolvePersistPath(testSavePath, normalizedWorkspace);
   const resolvedDocsSavePath = resolvePersistPath(docsSavePath, normalizedWorkspace);
 
   if (generationTarget !== "api" && generationTarget !== "claude" && generationTarget !== "opencode") {
     return NextResponse.json({ error: "generationTarget must be api|claude|opencode" }, { status: 400 });
+  }
+
+  if (specSavePath && !resolvedSpecSavePath) {
+    return NextResponse.json(
+      { error: `specSavePath must be under allowed roots: ${allowedWorkspaceRoots().join(", ")}` },
+      { status: 400 }
+    );
   }
 
   if (testSavePath && !resolvedTestSavePath) {
@@ -830,6 +970,13 @@ export async function POST(req: NextRequest) {
   }
 
   const context = collectWorkspaceContext(normalizedWorkspace);
+  let fetchedWeb: FetchedWebContext;
+  try {
+    fetchedWeb = await fetchWebContext(sourceUrl);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: `Discoverer URL fetch failed: ${trimErrorMessage(message, 900)}` }, { status: 503 });
+  }
 
   let generatedTestConfig: DiscovererTestConfig;
   let agentDocs: string;
@@ -840,8 +987,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const specGenerated = generationTarget === "api"
-      ? await generateSpecWithModel(project, sourceUrl, context)
-      : await generateSpecWithCli(generationTarget, project, sourceUrl, context);
+      ? await generateSpecWithModel(project, sourceUrl, context, fetchedWeb)
+      : await generateSpecWithCli(generationTarget, project, sourceUrl, context, fetchedWeb);
     generatedSpec = specGenerated.spec;
     specModel = specGenerated.model;
   } catch (error) {
@@ -851,8 +998,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const generated = generationTarget === "api"
-      ? await generateWithModel(project, context, { sourceUrl, spec: generatedSpec })
-      : await generateWithCli(generationTarget, project, context, { sourceUrl, spec: generatedSpec });
+      ? await generateWithModel(project, context, { sourceUrl, spec: generatedSpec, webContext: fetchedWeb })
+      : await generateWithCli(generationTarget, project, context, { sourceUrl, spec: generatedSpec, webContext: fetchedWeb });
     generatedTestConfig = generated.testConfig;
     agentDocs = generated.agentDocs;
     generationModel = generated.model;
@@ -871,8 +1018,8 @@ export async function POST(req: NextRequest) {
   let docsMode: "created" | "appended" | "unchanged" | "skipped" = "skipped";
   let testsMerge: DiscovererMergeReport | undefined;
 
-  const specSaveDir = resolvedTestSavePath || DISCOVERER_SPECS_DIR;
-  const targetSpecFile = path.join(specSaveDir, `${project}.spec.md`);
+  const specSaveDir = resolvedSpecSavePath || DISCOVERER_SPECS_DIR;
+  const targetSpecFile = path.join(specSaveDir, `${project}.spec.py`);
 
   const targetTestsFile = persistTests
     ? path.join(resolvedTestSavePath || TEST_CASES_DIR, `${project}.json`)

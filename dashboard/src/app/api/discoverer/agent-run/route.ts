@@ -15,6 +15,7 @@ interface DiscoverRun {
   sourceUrl?: string;
   persistTests: boolean;
   persistDocs: boolean;
+  specSavePath?: string;
   testSavePath?: string;
   docsSavePath?: string;
   status: DiscoverRunStatus;
@@ -230,6 +231,7 @@ function buildApiPayload(input: {
   persistTests: boolean;
   persistDocs: boolean;
   generationTarget: "api" | "claude" | "opencode";
+  specSavePath?: string;
   testSavePath?: string;
   docsSavePath?: string;
 }) {
@@ -242,6 +244,7 @@ function buildApiPayload(input: {
     generationTarget: input.generationTarget,
   };
   if (input.testSavePath) payload.testSavePath = input.testSavePath;
+  if (input.specSavePath) payload.specSavePath = input.specSavePath;
   if (input.docsSavePath) payload.docsSavePath = input.docsSavePath;
   return JSON.stringify(payload);
 }
@@ -260,6 +263,7 @@ function buildRunnerCommand(target: DiscoverTarget, input: {
   sourceUrl: string;
   persistTests: boolean;
   persistDocs: boolean;
+  specSavePath?: string;
   testSavePath?: string;
   docsSavePath?: string;
 }) {
@@ -286,6 +290,7 @@ function spawnBackgroundRun(meta: DiscoverRun) {
     sourceUrl: meta.sourceUrl ?? "",
     persistTests: meta.persistTests,
     persistDocs: meta.persistDocs,
+    specSavePath: meta.specSavePath,
     testSavePath: meta.testSavePath,
     docsSavePath: meta.docsSavePath,
   });
@@ -344,6 +349,7 @@ export async function POST(req: NextRequest) {
   const sourceUrl = String(body.sourceUrl ?? "").trim();
   const persistTests = body.persistTests !== false;
   const persistDocs = body.persistDocs !== false;
+  const specSavePath = typeof body.specSavePath === "string" ? body.specSavePath.trim() : "";
   const testSavePath = typeof body.testSavePath === "string" ? body.testSavePath.trim() : "";
   const docsSavePath = typeof body.docsSavePath === "string" ? body.docsSavePath.trim() : "";
 
@@ -384,6 +390,7 @@ export async function POST(req: NextRequest) {
     sourceUrl,
     persistTests,
     persistDocs,
+    specSavePath: specSavePath || undefined,
     testSavePath: testSavePath || undefined,
     docsSavePath: docsSavePath || undefined,
     status: "running",
