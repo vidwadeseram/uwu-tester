@@ -76,7 +76,7 @@ function ChatBubble({ msg }: { msg: Message }) {
         </div>
       )}
       <div
-        className="max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed"
+        className="max-w-[92%] sm:max-w-[80%] rounded-2xl px-3 sm:px-4 py-3 text-sm leading-relaxed"
         style={
           isUser
             ? { background: "rgba(0,212,255,0.15)", border: "1px solid rgba(0,212,255,0.3)", color: "#e2e8f0", borderRadius: "18px 18px 4px 18px" }
@@ -197,13 +197,13 @@ export default function ChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]" style={{ background: "#0a0e1a" }}>
+    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-[calc(100dvh-3.5rem)]" style={{ background: "#0a0e1a" }}>
       {/* Header */}
       <div
-        className="flex-shrink-0 px-4 py-3 flex items-center justify-between border-b"
+        className="flex-shrink-0 px-3 sm:px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b"
         style={{ background: "rgba(10,14,26,0.95)", borderColor: "#1e2d4a" }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 w-full sm:w-auto">
           <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ background: "linear-gradient(135deg,#00ff88,#00d4ff)" }}
@@ -221,7 +221,7 @@ export default function ChatPage() {
             <span className="text-xs" style={{ color: "#00ff88" }}>online</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto justify-end flex-wrap">
           <FolderTreePicker
             value={workspacePath}
             onSelect={setWorkspacePath}
@@ -247,7 +247,7 @@ export default function ChatPage() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div className="flex-1 overflow-y-auto px-3 sm:px-4 py-5 sm:py-6">
         {isEmpty ? (
           <div className="flex flex-col items-center justify-center h-full gap-8">
             <div className="text-center">
@@ -309,7 +309,7 @@ export default function ChatPage() {
 
       {/* Input */}
       <div
-        className="flex-shrink-0 px-4 py-3 border-t"
+        className="flex-shrink-0 px-3 sm:px-4 py-3 border-t"
         style={{ background: "rgba(10,14,26,0.95)", borderColor: "#1e2d4a" }}
       >
         <div className="max-w-3xl mx-auto">
