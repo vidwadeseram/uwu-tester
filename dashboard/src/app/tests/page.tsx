@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import FolderTreePicker from "@/app/components/FolderTreePicker";
 
 // ─── MCP Modal ────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,9 @@ function McpModal({
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoError, setAutoError] = useState("");
   const [autoInfo, setAutoInfo] = useState("");
+  const [otpInstructionConfig, setOtpInstructionConfig] = useState("");
+  const [otpTmuxSessionConfig, setOtpTmuxSessionConfig] = useState("");
+  const [otpTmuxWindowConfig, setOtpTmuxWindowConfig] = useState("");
 
   useEffect(() => {
     fetch("/api/tests/mcp-info")
@@ -48,6 +52,17 @@ function McpModal({
         if (d?.selected?.tests_claude) setTestsClaudeModel(String(d.selected.tests_claude));
         if (d?.selected?.tests_opencode) setTestsOpencodeModel(String(d.selected.tests_opencode));
         else if (d?.selected?.tests) setTestsOpencodeModel(String(d.selected.tests));
+      })
+      .catch(() => {});
+
+    fetch(`/api/tests/env?project=${encodeURIComponent(project)}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d && typeof d === "object") {
+          if (typeof d.OTP_FETCH_INSTRUCTION === "string") setOtpInstructionConfig(d.OTP_FETCH_INSTRUCTION);
+          if (typeof d.OTP_TMUX_SESSION === "string") setOtpTmuxSessionConfig(d.OTP_TMUX_SESSION);
+          if (typeof d.OTP_TMUX_WINDOW === "string") setOtpTmuxWindowConfig(d.OTP_TMUX_WINDOW);
+        }
       })
       .catch(() => {});
   }, []);
@@ -99,8 +114,22 @@ function McpModal({
 
   // Must cd /home/uwu so Claude uses the project scope where the MCP server is registered.
   // Run as uwu (non-root) so --dangerously-skip-permissions is accepted.
-  const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && CLAUDE_MODEL=${testsClaudeModel} claude --dangerously-skip-permissions --model ${testsClaudeModel} -p "${claudePrompt}"'`;
-  const opencodeCmd = `sudo -u uwu opencode run --dir ${dir} --model ${testsOpencodeModel} "${opencodePrompt}"`;
+  const otpSourceHint = [otpTmuxSessionConfig.trim(), otpTmuxWindowConfig.trim()].filter(Boolean).join(":");
+  const otpInstructionText = otpInstructionConfig.trim()
+    ? otpInstructionConfig.trim()
+    : "Use project OTP source settings and call MCP tool get_otp before filling OTP fields.";
+  const otpPromptLine = `For OTP retrieval, call MCP tool get_otp with project '${project}' and instruction '${otpInstructionText}'. Source hint: ${otpSourceHint || "not configured"}. Never hardcode OTP source values in prompts.`;
+  const claudePromptEffective = claudePrompt.replace(
+    "For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons.",
+    otpPromptLine
+  );
+  const opencodePromptEffective = opencodePrompt.replace(
+    "For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons.",
+    otpPromptLine
+  );
+
+  const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && CLAUDE_MODEL=${testsClaudeModel} claude --dangerously-skip-permissions --model ${testsClaudeModel} -p "${claudePromptEffective}"'`;
+  const opencodeCmd = `sudo -u uwu opencode run --dir ${dir} --model ${testsOpencodeModel} "${opencodePromptEffective}"`;
 
   const isClaudeCode = target === "claude";
   const isApi = target === "api";
@@ -400,15 +429,19 @@ interface WorkspaceOption {
   kind: "group" | "project";
 }
 
-interface DbFileInfo {
-  path: string;
-  name: string;
-  bytes: number;
-  updatedAt: string;
+type DbType = "postgres";
+
+interface DbConnectionForm {
+  dbType: DbType;
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  password: string;
 }
 
 interface DbRowItem {
-  __rowid__: number;
+  __rowid__: string;
   [key: string]: unknown;
 }
 
@@ -1210,19 +1243,28 @@ export default function TestsPage() {
   const [specTargetUrl, setSpecTargetUrl] = useState("");
   const [specRunning, setSpecRunning] = useState(false);
   const [specRunStatus, setSpecRunStatus] = useState("");
+  const [specFiles, setSpecFiles] = useState<string[]>([]);
+  const [specFilesLoading, setSpecFilesLoading] = useState(false);
+  const [specSearch, setSpecSearch] = useState("");
+  const [specFolderPath, setSpecFolderPath] = useState("");
 
+  const [dbConnection, setDbConnection] = useState<DbConnectionForm>({
+    dbType: "postgres",
+    host: "",
+    port: "5432",
+    database: "",
+    username: "",
+    password: "",
+  });
   const [dbSearch, setDbSearch] = useState("");
   const [dbLoading, setDbLoading] = useState(false);
-  const [dbList, setDbList] = useState<DbFileInfo[]>([]);
-  const [dbNextOffset, setDbNextOffset] = useState<number | null>(0);
-  const [selectedDbPath, setSelectedDbPath] = useState("");
   const [dbTables, setDbTables] = useState<string[]>([]);
   const [selectedTable, setSelectedTable] = useState("");
   const [rowSearch, setRowSearch] = useState("");
   const [rowLoading, setRowLoading] = useState(false);
   const [dbRows, setDbRows] = useState<DbRowItem[]>([]);
   const [rowNextOffset, setRowNextOffset] = useState<number | null>(0);
-  const [selectedRowIds, setSelectedRowIds] = useState<number[]>([]);
+  const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [cleanupStatus, setCleanupStatus] = useState("");
 
@@ -1369,7 +1411,6 @@ export default function TestsPage() {
     agentRunStatusRef.current = {};
     loadConfig(selectedProject);
     loadResults(selectedProject);
-    loadAgentRuns(selectedProject);
     loadEnvVars(selectedProject);
     setEditingCase(null);
     setEditingWorkflow(null);
@@ -1387,14 +1428,7 @@ export default function TestsPage() {
       })
       .catch(() => {});
 
-    const agentPoll = setInterval(() => {
-      loadAgentRuns(selectedProject);
-    }, 5000);
-
-    return () => {
-      clearInterval(agentPoll);
-    };
-  }, [selectedProject, loadConfig, loadResults, loadAgentRuns, loadEnvVars, pollRunStatus]);
+  }, [selectedProject, loadConfig, loadResults, loadEnvVars, pollRunStatus]);
 
   // Save config to server
   const saveConfig = useCallback(async (updated: TestConfig) => {
@@ -1601,71 +1635,76 @@ export default function TestsPage() {
     [selectedProject, pollRunStatus, loadAgentRuns]
   );
 
-  const workspaceForCleanup = config?.workspace_path ?? "";
+  const dbConnectionValid =
+    !!dbConnection.host.trim() &&
+    !!dbConnection.database.trim() &&
+    !!dbConnection.username.trim() &&
+    !!dbConnection.password &&
+    Number(dbConnection.port) > 0;
 
-  const loadDatabases = useCallback(async (reset: boolean) => {
-    if (!workspaceForCleanup) return;
-    const offset = reset ? 0 : (dbNextOffset ?? 0);
-    if (!reset && dbNextOffset === null) return;
-    setDbLoading(true);
-    try {
-      const params = new URLSearchParams({
-        action: "databases",
-        workspacePath: workspaceForCleanup,
-        limit: "30",
-        offset: String(offset),
-      });
-      if (dbSearch.trim()) params.set("search", dbSearch.trim());
-      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setCleanupStatus(data.error ?? "Failed to load databases");
-        return;
-      }
-      const items = Array.isArray(data.items) ? (data.items as DbFileInfo[]) : [];
-      setDbList((prev) => (reset ? items : [...prev, ...items]));
-      setDbNextOffset(typeof data.nextOffset === "number" ? data.nextOffset : null);
-    } catch {
-      setCleanupStatus("Failed to load databases");
-    } finally {
-      setDbLoading(false);
+  const buildDbConnectionPayload = useCallback(() => ({
+    dbType: dbConnection.dbType,
+    host: dbConnection.host.trim(),
+    port: Number(dbConnection.port || "5432"),
+    database: dbConnection.database.trim(),
+    username: dbConnection.username.trim(),
+    password: dbConnection.password,
+  }), [dbConnection]);
+
+  const loadTables = useCallback(async () => {
+    if (!dbConnectionValid) {
+      setCleanupStatus("Provide DB type, host, port, database, username, and password.");
+      return;
     }
-  }, [workspaceForCleanup, dbNextOffset, dbSearch]);
-
-  const loadTables = useCallback(async (dbPath: string) => {
-    if (!workspaceForCleanup || !dbPath) return;
+    setDbLoading(true);
+    setCleanupStatus("");
     try {
-      const params = new URLSearchParams({ action: "tables", workspacePath: workspaceForCleanup, dbPath });
-      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
+      const res = await fetch("/api/tests/db-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "tables",
+          connection: buildDbConnectionPayload(),
+        }),
+      });
       const data = await res.json();
       if (!res.ok) {
         setCleanupStatus(data.error ?? "Failed to load tables");
         return;
       }
-      const tables = Array.isArray(data.tables) ? data.tables.filter((v: unknown): v is string => typeof v === "string") : [];
+      const tables = Array.isArray(data.tables)
+        ? data.tables.filter((value: unknown): value is string => typeof value === "string")
+        : [];
       setDbTables(tables);
       setSelectedTable((prev) => (prev && tables.includes(prev) ? prev : (tables[0] ?? "")));
+      if (tables.length === 0) {
+        setCleanupStatus("No tables found for the provided PostgreSQL connection.");
+      }
     } catch {
       setCleanupStatus("Failed to load tables");
+    } finally {
+      setDbLoading(false);
     }
-  }, [workspaceForCleanup]);
+  }, [buildDbConnectionPayload, dbConnectionValid]);
 
   const loadRows = useCallback(async (reset: boolean) => {
-    if (!workspaceForCleanup || !selectedDbPath || !selectedTable) return;
+    if (!dbConnectionValid || !selectedTable) return;
     const offset = reset ? 0 : (rowNextOffset ?? 0);
     if (!reset && rowNextOffset === null) return;
     setRowLoading(true);
     try {
-      const params = new URLSearchParams({
-        action: "rows",
-        workspacePath: workspaceForCleanup,
-        dbPath: selectedDbPath,
-        table: selectedTable,
-        limit: "50",
-        offset: String(offset),
+      const res = await fetch("/api/tests/db-cleanup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "rows",
+          connection: buildDbConnectionPayload(),
+          table: selectedTable,
+          search: rowSearch,
+          offset,
+          limit: 50,
+        }),
       });
-      if (rowSearch.trim()) params.set("search", rowSearch.trim());
-      const res = await fetch(`/api/tests/db-cleanup?${params.toString()}`);
       const data = await res.json();
       if (!res.ok) {
         setCleanupStatus(data.error ?? "Failed to load rows");
@@ -1679,10 +1718,10 @@ export default function TestsPage() {
     } finally {
       setRowLoading(false);
     }
-  }, [workspaceForCleanup, selectedDbPath, selectedTable, rowNextOffset, rowSearch]);
+  }, [buildDbConnectionPayload, dbConnectionValid, selectedTable, rowNextOffset, rowSearch]);
 
   const runDbCleanup = useCallback(async () => {
-    if (!workspaceForCleanup || !selectedDbPath || !selectedTable || selectedRowIds.length === 0) return;
+    if (!dbConnectionValid || !selectedTable || selectedRowIds.length === 0) return;
     setCleanupBusy(true);
     setCleanupStatus("");
     try {
@@ -1691,8 +1730,7 @@ export default function TestsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "delete",
-          workspacePath: workspaceForCleanup,
-          dbPath: selectedDbPath,
+          connection: buildDbConnectionPayload(),
           table: selectedTable,
           rowids: selectedRowIds,
         }),
@@ -1711,7 +1749,29 @@ export default function TestsPage() {
     } finally {
       setCleanupBusy(false);
     }
-  }, [workspaceForCleanup, selectedDbPath, selectedTable, selectedRowIds, loadRows]);
+  }, [buildDbConnectionPayload, dbConnectionValid, selectedTable, selectedRowIds, loadRows]);
+
+  const loadSpecFiles = useCallback(async () => {
+    if (!selectedProject) return;
+    setSpecFilesLoading(true);
+    try {
+      const res = await fetch(`/api/tests/spec-files?project=${encodeURIComponent(selectedProject)}`);
+      const data = await res.json();
+      if (!res.ok) {
+        setSpecRunStatus(data.error ?? "Failed to load spec files");
+        return;
+      }
+      const files = Array.isArray(data.files)
+        ? data.files.filter((value: unknown): value is string => typeof value === "string")
+        : [];
+      setSpecFiles(files);
+      if (!specPath && files.length > 0) setSpecPath(files[0]);
+    } catch {
+      setSpecRunStatus("Failed to load spec files");
+    } finally {
+      setSpecFilesLoading(false);
+    }
+  }, [selectedProject, specPath]);
 
   const runPlaywrightSpec = useCallback(async () => {
     if (!selectedProject) return;
@@ -1746,31 +1806,20 @@ export default function TestsPage() {
     setSpecRunStatus("");
     setSpecPath("");
     setSpecTargetUrl("");
-  }, [selectedProject]);
+    setSpecSearch("");
+    setSpecFolderPath("");
+    setSpecFiles([]);
+    void loadSpecFiles();
+  }, [selectedProject, loadSpecFiles]);
 
   useEffect(() => {
-    setDbList([]);
-    setDbNextOffset(0);
-    setSelectedDbPath("");
     setDbTables([]);
     setSelectedTable("");
     setDbRows([]);
     setRowNextOffset(0);
     setSelectedRowIds([]);
     setCleanupStatus("");
-    if (!workspaceForCleanup) return;
-    void loadDatabases(true);
-  }, [workspaceForCleanup, dbSearch, loadDatabases]);
-
-  useEffect(() => {
-    setDbTables([]);
-    setSelectedTable("");
-    setDbRows([]);
-    setRowNextOffset(0);
-    setSelectedRowIds([]);
-    if (!selectedDbPath) return;
-    void loadTables(selectedDbPath);
-  }, [selectedDbPath, loadTables]);
+  }, [dbConnection.host, dbConnection.port, dbConnection.database, dbConnection.username, dbConnection.password, dbConnection.dbType]);
 
   useEffect(() => {
     setDbRows([]);
@@ -1798,7 +1847,7 @@ export default function TestsPage() {
               uwu-code
             </h1>
             <p className="text-xs" style={{ color: "#4a5568" }}>
-              browser-use regression tests
+              playwright regression tests
             </p>
           </div>
         </div>
@@ -1811,76 +1860,6 @@ export default function TestsPage() {
           ← Dashboard
         </a>
       </div>
-
-      {(running || runningAgentRuns.length > 0 || recentFinishedAgentRuns.length > 0) && (
-        <div className="fixed top-[60px] inset-x-3 sm:inset-x-auto sm:right-4 z-50 sm:w-full max-w-sm">
-          <div
-            className="rounded-lg p-3 space-y-2"
-            style={{
-              background: "rgba(10,14,26,0.95)",
-              border: "1px solid rgba(0,212,255,0.25)",
-              boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-            }}
-          >
-            <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#00d4ff" }}>
-              Background Runs
-            </div>
-
-            {running && selectedProject && (
-              <div className="flex items-center gap-2 text-xs" style={{ color: "#00ff88" }}>
-                <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 12a9 9 0 1 1-9-9" />
-                </svg>
-                <span className="font-mono">API · {selectedProject}</span>
-              </div>
-            )}
-
-            {runningAgentRuns.map((run) => (
-              <div key={run.run_id} className="rounded px-2 py-1.5" style={{ background: "rgba(30,45,74,0.45)", border: "1px solid rgba(30,45,74,0.7)" }}>
-                <div className="flex items-center gap-2 text-xs" style={{ color: run.target === "claude" ? "#f97316" : "#a855f7" }}>
-                  <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-9-9" />
-                  </svg>
-                  <span className="font-mono">{run.target} · {run.project}</span>
-                </div>
-                <div className="text-[11px] mt-0.5" style={{ color: "#94a3b8" }}>
-                  started {formatTime(run.started_at)}
-                </div>
-              </div>
-            ))}
-
-            {recentFinishedAgentRuns.map((run) => (
-              <div key={run.run_id} className="rounded px-2 py-1.5" style={{ background: run.status === "completed" ? "rgba(0,255,136,0.08)" : "rgba(255,68,68,0.08)", border: `1px solid ${run.status === "completed" ? "rgba(0,255,136,0.3)" : "rgba(255,68,68,0.3)"}` }}>
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <span style={{ color: run.status === "completed" ? "#00ff88" : "#ff4444" }} className="font-mono">
-                    {run.target} · {run.project} · {run.status}
-                  </span>
-                  <button
-                    onClick={() => setDismissedRunIds((prev) => {
-                      const next = prev.includes(run.run_id) ? prev : [...prev, run.run_id];
-                      try { localStorage.setItem("dismissedAgentRunIds", JSON.stringify(next)); } catch {}
-                      return next;
-                    })}
-                    className="w-5 h-5 rounded text-[10px]"
-                    style={BTN(true, "#94a3b8")}
-                    title="Dismiss"
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div className="text-[11px] mt-0.5" style={{ color: "#94a3b8" }}>
-                  started {formatTime(run.started_at)}
-                </div>
-                {run.status === "failed" && run.summary && (
-                  <pre className="text-[10px] mt-1 rounded p-1 overflow-x-auto whitespace-pre-wrap break-all" style={{ background: "rgba(0,0,0,0.3)", color: "#f87171", maxHeight: "8rem" }}>
-                    {run.summary.slice(-800)}
-                  </pre>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT: Project selector */}
@@ -1991,7 +1970,6 @@ export default function TestsPage() {
           )}
         </div>
 
-        {/* RIGHT: Test cases + results */}
         <div className="lg:col-span-2 space-y-6">
           {!selectedProject ? (
             <div className="card flex items-center justify-center py-16" style={{ color: "#4a5568" }}>
@@ -2000,55 +1978,8 @@ export default function TestsPage() {
           ) : (
             <>
               <div className="space-y-2">
-                <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
-                  Run Scope
-                </span>
-                <div className="grid sm:grid-cols-3 gap-2">
-                  <button onClick={() => setRunMode("all")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "all", "#00ff88")}>All enabled cases</button>
-                  <button onClick={() => setRunMode("workflows")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "workflows", "#a855f7")}>Selected workflows</button>
-                  <button onClick={() => setRunMode("cases")} className="px-3 py-1.5 rounded text-xs" style={BTN(runMode === "cases", "#00d4ff")}>Selected cases</button>
-                </div>
-
-                {runMode === "workflows" && config && (
-                  <div className="flex flex-wrap gap-2">
-                    {config.workflows.map((wf) => (
-                      <button
-                        key={wf.id}
-                        onClick={() =>
-                          setSelectedWorkflowIds((prev) =>
-                            prev.includes(wf.id) ? prev.filter((v) => v !== wf.id) : [...prev, wf.id]
-                          )
-                        }
-                        className="px-2 py-1 rounded text-xs font-mono"
-                        style={BTN(selectedWorkflowIds.includes(wf.id), "#a855f7")}
-                      >
-                        {wf.id}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {runMode === "cases" && config && (
-                  <div className="flex flex-wrap gap-2">
-                    {config.test_cases.map((tc) => (
-                      <button
-                        key={tc.id}
-                        onClick={() =>
-                          setSelectedCaseIds((prev) =>
-                            prev.includes(tc.id) ? prev.filter((v) => v !== tc.id) : [...prev, tc.id]
-                          )
-                        }
-                        className="px-2 py-1 rounded text-xs font-mono"
-                        style={BTN(selectedCaseIds.includes(tc.id), "#00d4ff")}
-                      >
-                        {tc.id}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <p className="text-xs" style={{ color: "#4a5568" }}>
-                  Effective run order: {resolvedRunCaseIds.length > 0 ? resolvedRunCaseIds.join(" → ") : "None selected"}
+                <p className="text-xs" style={{ color: "#64748b" }}>
+                  Run Playwright specs for this project and review the recorded results below.
                 </p>
 
                 <div className="rounded p-3 space-y-2" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}>
@@ -2065,13 +1996,73 @@ export default function TestsPage() {
                   <p className="text-xs" style={{ color: "#64748b" }}>
                     Runs a generated Python Playwright spec file, records video artifacts, and stores pass/fail in Recent Runs.
                   </p>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <button
+                      type="button"
+                      onClick={() => void loadSpecFiles()}
+                      disabled={specFilesLoading || specRunning}
+                      className="px-2.5 py-1.5 rounded text-xs font-medium"
+                      style={BTN(!specFilesLoading && !specRunning, "#94a3b8")}
+                    >
+                      {specFilesLoading ? "Refreshing files…" : "Refresh spec files"}
+                    </button>
+                    <span className="text-[11px]" style={{ color: "#64748b" }}>
+                      Pick a discovered `.spec.py` file (file finder mode)
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
+                    <FolderTreePicker
+                      value={specFolderPath}
+                      onSelect={setSpecFolderPath}
+                      compact
+                      placeholder="Filter by folder"
+                    />
+                    <div className="flex-1 px-3 py-2 rounded text-[11px] font-mono min-w-0" style={{ background: "#0f172a", color: "#94a3b8", border: "1px solid #1e2d4a", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={specFolderPath || "No folder filter"}>
+                      {specFolderPath || "No folder filter"}
+                    </div>
+                    {specFolderPath && (
+                      <button type="button" onClick={() => setSpecFolderPath("")} className="px-2 py-1 rounded text-xs" style={BTN(true, "#94a3b8")}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <input
-                    className="w-full px-3 py-2 rounded text-xs font-mono"
+                    className="w-full px-3 py-2 rounded text-xs"
                     style={INPUT_STYLE}
-                    value={specPath}
-                    onChange={(e) => setSpecPath(e.target.value)}
-                    placeholder={`Default: regression_tests/specs/${selectedProject}.spec.py`}
+                    value={specSearch}
+                    onChange={(e) => setSpecSearch(e.target.value)}
+                    placeholder="Filter discovered spec files..."
                   />
+                  <div className="max-h-36 overflow-y-auto rounded p-2 space-y-1" style={{ background: "rgba(2,6,23,0.4)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                    {specFiles
+                      .filter((file) => {
+                        if (specFolderPath.trim() && !file.startsWith(specFolderPath.trim())) return false;
+                        if (!specSearch.trim()) return true;
+                        const q = specSearch.trim().toLowerCase();
+                        return file.toLowerCase().includes(q);
+                      })
+                      .map((file) => (
+                        <button
+                          key={file}
+                          type="button"
+                          onClick={() => setSpecPath(file)}
+                          className="w-full text-left px-2 py-1.5 rounded text-[11px] font-mono"
+                          style={{
+                            background: specPath === file ? "rgba(34,197,94,0.12)" : "rgba(30,45,74,0.28)",
+                            border: `1px solid ${specPath === file ? "rgba(34,197,94,0.35)" : "rgba(30,45,74,0.6)"}`,
+                            color: specPath === file ? "#86efac" : "#94a3b8",
+                          }}
+                          title={file}
+                        >
+                          {file}
+                        </button>
+                      ))}
+                    {!specFilesLoading && specFiles.length === 0 && (
+                      <div className="text-xs" style={{ color: "#64748b" }}>
+                        No `.spec.py` files found. Generate one via Discoverer first.
+                      </div>
+                    )}
+                  </div>
                   <input
                     className="w-full px-3 py-2 rounded text-xs font-mono"
                     style={INPUT_STYLE}
@@ -2097,33 +2088,6 @@ export default function TestsPage() {
                   )}
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={() => setMcpModal("api")}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
-                    style={BTN(true, "#00ff88")}
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" /></svg>
-                    Test via API
-                  </button>
-                  <button
-                    onClick={() => setMcpModal("claude")}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
-                    style={BTN(true, "#f97316")}
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 9h8M8 13h5" /></svg>
-                    Test via Claude Code
-                  </button>
-                  <button
-                    onClick={() => setMcpModal("opencode")}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium"
-                    style={BTN(true, "#a855f7")}
-                  >
-                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" /></svg>
-                    Test via Opencode
-                  </button>
-                </div>
-
                 <div className="rounded p-3 space-y-3" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
@@ -2136,135 +2100,166 @@ export default function TestsPage() {
                     )}
                   </div>
                   <p className="text-xs" style={{ color: "#64748b" }}>
-                    Select a DB file, choose a table, search rows, and check only rows you want deleted before test runs.
+                    Enter DB connection details, load tables, search rows, and check only rows you want deleted before test runs.
                   </p>
-                  {!workspaceForCleanup ? (
-                    <div className="text-xs px-2 py-1 rounded" style={{ color: "#fbbf24", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.3)" }}>
-                      This project has no workspace_path yet, so DB cleanup is unavailable.
-                    </div>
-                  ) : (
+                  <div className="grid md:grid-cols-2 gap-2">
+                    <select
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.dbType}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, dbType: e.target.value as DbType }))}
+                    >
+                      <option value="postgres">PostgreSQL</option>
+                    </select>
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.host}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, host: e.target.value }))}
+                      placeholder="Host (e.g. 127.0.0.1)"
+                    />
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.port}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, port: e.target.value }))}
+                      placeholder="Port (5432)"
+                    />
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.database}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, database: e.target.value }))}
+                      placeholder="Database"
+                    />
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.username}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, username: e.target.value }))}
+                      placeholder="Username"
+                    />
+                    <input
+                      type="password"
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={dbConnection.password}
+                      onChange={(e) => setDbConnection((prev) => ({ ...prev, password: e.target.value }))}
+                      placeholder="Password"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <button type="button" onClick={() => void loadTables()} className="px-2 py-1 rounded text-xs" style={BTN(dbConnectionValid && !dbLoading, "#00d4ff")}>
+                      {dbLoading ? "Loading tables…" : "Load tables"}
+                    </button>
+                    <span className="text-[11px]" style={{ color: "#64748b" }}>
+                      Credentials are used for this request only.
+                    </span>
+                  </div>
+
+                  <input
+                    className="w-full px-3 py-2 rounded text-xs"
+                    style={INPUT_STYLE}
+                    value={dbSearch}
+                    onChange={(e) => setDbSearch(e.target.value)}
+                    placeholder="Search table names..."
+                  />
+
+                  <div className="max-h-36 overflow-y-auto space-y-1 rounded p-2" style={{ background: "rgba(2,6,23,0.4)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                    {dbTables
+                      .filter((table) => {
+                        if (!dbSearch.trim()) return true;
+                        return table.toLowerCase().includes(dbSearch.trim().toLowerCase());
+                      })
+                      .map((table) => (
+                        <button
+                          key={table}
+                          type="button"
+                          onClick={() => setSelectedTable(table)}
+                          className="w-full text-left px-2 py-1.5 rounded text-[11px] font-mono"
+                          style={{
+                            background: selectedTable === table ? "rgba(168,85,247,0.12)" : "rgba(30,45,74,0.28)",
+                            border: `1px solid ${selectedTable === table ? "rgba(168,85,247,0.35)" : "rgba(30,45,74,0.6)"}`,
+                            color: selectedTable === table ? "#d8b4fe" : "#94a3b8",
+                          }}
+                        >
+                          {table}
+                        </button>
+                      ))}
+                    {!dbLoading && dbTables.length === 0 && (
+                      <div className="text-xs" style={{ color: "#64748b" }}>
+                        No tables loaded yet.
+                      </div>
+                    )}
+                  </div>
+
+                  {selectedTable && (
                     <>
                       <input
                         className="w-full px-3 py-2 rounded text-xs"
                         style={INPUT_STYLE}
-                        value={dbSearch}
-                        onChange={(e) => setDbSearch(e.target.value)}
-                        placeholder="Search database files..."
+                        value={rowSearch}
+                        onChange={(e) => setRowSearch(e.target.value)}
+                        placeholder="Search rows..."
                       />
-
-                      <div className="max-h-36 overflow-y-auto space-y-1 rounded p-2" style={{ background: "rgba(2,6,23,0.4)", border: "1px solid rgba(30,45,74,0.6)" }}>
-                        {dbList.map((db) => (
-                          <button
-                            key={db.path}
-                            type="button"
-                            onClick={() => setSelectedDbPath(db.path)}
-                            className="w-full text-left px-2 py-1.5 rounded"
-                            style={{
-                              background: selectedDbPath === db.path ? "rgba(0,212,255,0.12)" : "rgba(30,45,74,0.28)",
-                              border: `1px solid ${selectedDbPath === db.path ? "rgba(0,212,255,0.35)" : "rgba(30,45,74,0.6)"}`,
-                              color: selectedDbPath === db.path ? "#67e8f9" : "#94a3b8",
-                            }}
-                            title={db.path}
-                          >
-                            <div className="text-xs font-mono truncate">{db.name}</div>
-                            <div className="text-[11px] truncate" style={{ color: "#64748b" }}>{db.path}</div>
-                          </button>
-                        ))}
-                        {dbLoading && <div className="text-xs" style={{ color: "#64748b" }}>Loading databases…</div>}
-                        {!dbLoading && dbList.length === 0 && <div className="text-xs" style={{ color: "#64748b" }}>No SQLite databases found.</div>}
+                      <div className="max-h-52 overflow-y-auto rounded" style={{ border: "1px solid rgba(30,45,74,0.6)" }}>
+                        <table className="w-full text-xs">
+                          <thead style={{ background: "rgba(15,23,42,0.8)", color: "#94a3b8" }}>
+                            <tr>
+                              <th className="p-2 text-left">Delete</th>
+                              <th className="p-2 text-left">ctid</th>
+                              <th className="p-2 text-left">Row preview</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {dbRows.map((row) => {
+                              const rowid = String(row.__rowid__ ?? "");
+                              const checked = selectedRowIds.includes(rowid);
+                              const preview = Object.entries(row)
+                                .filter(([key]) => key !== "__rowid__")
+                                .slice(0, 4)
+                                .map(([key, value]) => `${key}=${String(value)}`)
+                                .join(" · ");
+                              return (
+                                <tr key={`${selectedTable}-${rowid}`} style={{ borderTop: "1px solid rgba(30,45,74,0.4)" }}>
+                                  <td className="p-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        setSelectedRowIds((prev) =>
+                                          e.target.checked ? (prev.includes(rowid) ? prev : [...prev, rowid]) : prev.filter((id) => id !== rowid)
+                                        );
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="p-2 font-mono" style={{ color: "#e2e8f0" }}>{rowid}</td>
+                                  <td className="p-2" style={{ color: "#94a3b8" }}>{preview || "(empty row)"}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        {rowLoading && <div className="p-2 text-xs" style={{ color: "#64748b" }}>Loading rows…</div>}
                       </div>
-                      {dbNextOffset !== null && (
-                        <button type="button" onClick={() => void loadDatabases(false)} className="px-2 py-1 rounded text-xs" style={BTN(!dbLoading, "#94a3b8")}>
-                          Load more DBs
+
+                      <div className="flex flex-wrap gap-2 items-center">
+                        {rowNextOffset !== null && (
+                          <button type="button" onClick={() => void loadRows(false)} className="px-2 py-1 rounded text-xs" style={BTN(!rowLoading, "#94a3b8")}>
+                            Load more rows
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void runDbCleanup()}
+                          disabled={cleanupBusy || selectedRowIds.length === 0}
+                          className="px-2.5 py-1.5 rounded text-xs font-medium"
+                          style={BTN(!cleanupBusy && selectedRowIds.length > 0, "#f97316")}
+                        >
+                          Delete selected rows ({selectedRowIds.length})
                         </button>
-                      )}
-
-                      {selectedDbPath && (
-                        <>
-                          <div className="flex flex-wrap gap-2">
-                            {dbTables.map((table) => (
-                              <button
-                                key={table}
-                                type="button"
-                                onClick={() => setSelectedTable(table)}
-                                className="px-2 py-1 rounded text-xs font-mono"
-                                style={BTN(selectedTable === table, "#a855f7")}
-                              >
-                                {table}
-                              </button>
-                            ))}
-                          </div>
-
-                          {selectedTable && (
-                            <>
-                              <input
-                                className="w-full px-3 py-2 rounded text-xs"
-                                style={INPUT_STYLE}
-                                value={rowSearch}
-                                onChange={(e) => setRowSearch(e.target.value)}
-                                placeholder="Search rows..."
-                              />
-                              <div className="max-h-52 overflow-y-auto rounded" style={{ border: "1px solid rgba(30,45,74,0.6)" }}>
-                                <table className="w-full text-xs">
-                                  <thead style={{ background: "rgba(15,23,42,0.8)", color: "#94a3b8" }}>
-                                    <tr>
-                                      <th className="p-2 text-left">Delete</th>
-                                      <th className="p-2 text-left">rowid</th>
-                                      <th className="p-2 text-left">Row preview</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {dbRows.map((row) => {
-                                      const rowid = Number(row.__rowid__);
-                                      const checked = selectedRowIds.includes(rowid);
-                                      const preview = Object.entries(row)
-                                        .filter(([key]) => key !== "__rowid__")
-                                        .slice(0, 4)
-                                        .map(([key, value]) => `${key}=${String(value)}`)
-                                        .join(" · ");
-                                      return (
-                                        <tr key={`${selectedTable}-${rowid}`} style={{ borderTop: "1px solid rgba(30,45,74,0.4)" }}>
-                                          <td className="p-2">
-                                            <input
-                                              type="checkbox"
-                                              checked={checked}
-                                              onChange={(e) => {
-                                                setSelectedRowIds((prev) =>
-                                                  e.target.checked ? (prev.includes(rowid) ? prev : [...prev, rowid]) : prev.filter((id) => id !== rowid)
-                                                );
-                                              }}
-                                            />
-                                          </td>
-                                          <td className="p-2 font-mono" style={{ color: "#e2e8f0" }}>{rowid}</td>
-                                          <td className="p-2" style={{ color: "#94a3b8" }}>{preview || "(empty row)"}</td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
-                                {rowLoading && <div className="p-2 text-xs" style={{ color: "#64748b" }}>Loading rows…</div>}
-                              </div>
-
-                              <div className="flex flex-wrap gap-2 items-center">
-                                {rowNextOffset !== null && (
-                                  <button type="button" onClick={() => void loadRows(false)} className="px-2 py-1 rounded text-xs" style={BTN(!rowLoading, "#94a3b8")}>
-                                    Load more rows
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => void runDbCleanup()}
-                                  disabled={cleanupBusy || selectedRowIds.length === 0}
-                                  className="px-2.5 py-1.5 rounded text-xs font-medium"
-                                  style={BTN(!cleanupBusy && selectedRowIds.length > 0, "#f97316")}
-                                >
-                                  Delete selected rows ({selectedRowIds.length})
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </>
-                      )}
+                      </div>
                     </>
                   )}
 
@@ -2274,8 +2269,53 @@ export default function TestsPage() {
                     </div>
                   )}
                 </div>
+
+                <div className="rounded p-3 space-y-2" style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}>
+                  <div className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
+                    OTP Retrieval Instructions (Agent + MCP)
+                  </div>
+                  <p className="text-xs" style={{ color: "#64748b" }}>
+                    Set how OTP should be fetched. Agents can call MCP tool <span className="font-mono">get_otp</span> using this instruction.
+                  </p>
+                  <textarea
+                    className="w-full px-3 py-2 rounded text-xs"
+                    style={INPUT_STYLE}
+                    rows={3}
+                    value={envVars.OTP_FETCH_INSTRUCTION ?? ""}
+                    onChange={(e) => setEnvVars((prev) => ({ ...prev, OTP_FETCH_INSTRUCTION: e.target.value }))}
+                    onBlur={() => { if (selectedProject) void saveEnvVars({ ...envVars }, selectedProject); }}
+                    placeholder="Example: Read OTP from tmux session allinonepos tab pos-commons"
+                  />
+                  <div className="grid md:grid-cols-3 gap-2">
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={envVars.OTP_TMUX_SESSION ?? ""}
+                      onChange={(e) => setEnvVars((prev) => ({ ...prev, OTP_TMUX_SESSION: e.target.value }))}
+                      onBlur={() => { if (selectedProject) void saveEnvVars({ ...envVars }, selectedProject); }}
+                      placeholder="OTP_TMUX_SESSION"
+                    />
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={envVars.OTP_TMUX_WINDOW ?? ""}
+                      onChange={(e) => setEnvVars((prev) => ({ ...prev, OTP_TMUX_WINDOW: e.target.value }))}
+                      onBlur={() => { if (selectedProject) void saveEnvVars({ ...envVars }, selectedProject); }}
+                      placeholder="OTP_TMUX_WINDOW"
+                    />
+                    <input
+                      className="px-3 py-2 rounded text-xs"
+                      style={INPUT_STYLE}
+                      value={envVars.OTP_TMUX_CAPTURE_LINES ?? "800"}
+                      onChange={(e) => setEnvVars((prev) => ({ ...prev, OTP_TMUX_CAPTURE_LINES: e.target.value }))}
+                      onBlur={() => { if (selectedProject) void saveEnvVars({ ...envVars }, selectedProject); }}
+                      placeholder="OTP_TMUX_CAPTURE_LINES"
+                    />
+                  </div>
+                </div>
               </div>
 
+              {false && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -2301,20 +2341,20 @@ export default function TestsPage() {
                 {showNewWorkflowForm && !editingWorkflow && config && (
                   <WorkflowEditor
                     initial={{}}
-                    cases={config.test_cases}
+                    cases={config?.test_cases ?? []}
                     onSave={handleAddWorkflow}
                     onCancel={() => setShowNewWorkflowForm(false)}
                   />
                 )}
 
-                {config && config.workflows.length > 0 && (
+                {(config?.workflows.length ?? 0) > 0 && (
                   <div className="space-y-2">
-                    {config.workflows.map((wf) =>
+                    {(config?.workflows ?? []).map((wf) =>
                       editingWorkflow?.id === wf.id ? (
                         <WorkflowEditor
                           key={wf.id}
                           initial={wf}
-                          cases={config.test_cases}
+                          cases={config?.test_cases ?? []}
                           onSave={handleEditWorkflow}
                           onCancel={() => setEditingWorkflow(null)}
                         />
@@ -2386,8 +2426,10 @@ export default function TestsPage() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* ── Test Cases ── */}
+              {false && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -2452,7 +2494,7 @@ export default function TestsPage() {
                 )}
 
                 {/* Case list */}
-                {config && config.test_cases.length === 0 && !showNewForm ? (
+                {(config?.test_cases.length ?? 0) === 0 && !showNewForm ? (
                   <div className="card flex flex-col items-center justify-center py-10 gap-2" style={{ color: "#4a5568" }}>
                     <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                       <polyline points="9 11 12 14 22 4" />
@@ -2462,7 +2504,7 @@ export default function TestsPage() {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {config?.test_cases.map((tc, i) =>
+                    {(config?.test_cases ?? []).map((tc, i) =>
                       editingCase?.id === tc.id ? (
                         <CaseEditor
                           key={tc.id}
@@ -2575,53 +2617,7 @@ export default function TestsPage() {
                   </div>
                 )}
               </div>
-
-              {/* ── Env Vars ── */}
-              {(() => {
-                const vars = config ? extractVars(config.test_cases) : [];
-                if (vars.length === 0) return null;
-                return (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#4a5568" }}>
-                        Test Variables
-                      </span>
-                      {envSaving && (
-                        <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2">
-                          <path d="M21 12a9 9 0 1 1-9-9" />
-                        </svg>
-                      )}
-                    </div>
-                    <div
-                      className="rounded p-3 space-y-2"
-                      style={{ background: "rgba(10,14,26,0.6)", border: "1px solid rgba(30,45,74,0.6)" }}
-                    >
-                      <p className="text-xs" style={{ color: "#4a5568" }}>
-                        Placeholders detected in test prompts — values saved per project.
-                      </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {vars.map((key) => (
-                          <div key={key} className="space-y-0.5">
-                            <label className="text-xs font-mono" style={{ color: "#94a3b8" }}>
-                              {`{{${key}}}`}
-                            </label>
-                            <input
-                              type={isSensitive(key) ? "password" : "text"}
-                              className="w-full px-2.5 py-1.5 rounded text-xs outline-none font-mono"
-                              style={INPUT_STYLE}
-                              value={envVars[key] ?? ""}
-                              onChange={(e) => setEnvVars((prev) => ({ ...prev, [key]: e.target.value }))}
-                              onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(30,45,74,0.8)"; if (selectedProject) saveEnvVars({ ...envVars }, selectedProject); }}
-                              onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(168,85,247,0.4)")}
-                              placeholder={isSensitive(key) ? "••••••••" : "value…"}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
+              )}
 
               {/* ── Results ── */}
               <div className="space-y-3">
@@ -2640,7 +2636,7 @@ export default function TestsPage() {
 
                 {results.length === 0 ? (
                   <div className="card flex items-center justify-center py-10 text-xs" style={{ color: "#4a5568" }}>
-                    No runs yet — run tests via API, Claude Code, or OpenCode to start
+                    No runs yet — run a Playwright spec to get started
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -2654,18 +2650,6 @@ export default function TestsPage() {
           )}
         </div>
       </div>
-
-      {mcpModal && selectedProject && (
-        <McpModal
-          target={mcpModal}
-          project={selectedProject}
-          runMode={runMode}
-          selectedWorkflowIds={selectedWorkflowIds}
-          selectedCaseIds={resolvedRunCaseIds}
-          onBackgroundStarted={handleBackgroundStarted}
-          onClose={() => setMcpModal(null)}
-        />
-      )}
 
       {pickerOpen && (
         <div

@@ -173,6 +173,24 @@ function parseSelection(value: unknown): string[] {
     .filter((v) => /^[a-zA-Z0-9_-]+$/.test(v));
 }
 
+function loadProjectEnv(project: string): Record<string, string> {
+  const file = getReadableProjectPaths(project).envFile;
+  if (!fs.existsSync(file)) return {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof key !== "string") continue;
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+        out[key] = String(value);
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function resolveTestsClaudeModel(): string {
   const settings = readSettings();
   const fromSettings = settings.models?.tests_claude?.trim();
@@ -198,8 +216,23 @@ function buildScopeInstruction(workflowIds: string[], caseIds: string[]): string
   return "Run all enabled test cases.";
 }
 
-function buildPrompt(project: string, runId: string, workflowIds: string[], caseIds: string[]): string {
+function buildPrompt(
+  project: string,
+  runId: string,
+  workflowIds: string[],
+  caseIds: string[],
+  otpConfig: { instruction: string; tmuxSession: string; tmuxWindow: string }
+): string {
   const scope = buildScopeInstruction(workflowIds, caseIds);
+  const otpHintParts = [
+    otpConfig.tmuxSession ? `session=${otpConfig.tmuxSession}` : "",
+    otpConfig.tmuxWindow ? `tab/window=${otpConfig.tmuxWindow}` : "",
+  ].filter(Boolean);
+  const otpHint = otpHintParts.length > 0 ? otpHintParts.join(", ") : "no tmux target configured";
+  const otpInstruction = otpConfig.instruction.trim()
+    ? otpConfig.instruction.trim()
+    : "Use configured project OTP source settings; if unavailable, request OTP instruction from user and retry.";
+
   return [
     `Read the test cases for project '${project}' from MCP resource uwu://projects/${project}/cases.`,
     scope,
@@ -216,7 +249,8 @@ function buildPrompt(project: string, runId: string, workflowIds: string[], case
     "(e) Capture browser errors during each case: console errors, page exceptions, failed requests, and HTTP >= 400 responses.",
     "(f) Include browser errors in each case detail JSON under key 'browser_errors'. If browser_errors is non-empty, that case MUST be FAIL (unless the test explicitly expects errors).",
     "(g) Before each case, clear localStorage, sessionStorage, and cookies for the active origin to avoid stale-state false positives.",
-    "(h) For allinonepos OTP retrieval, read OTP from tmux session 'allinonepos' window/tab 'pos-commons'.",
+    `(h) For OTP retrieval, call MCP tool 'get_otp' with project='${project}' and instruction='${otpInstruction}'. Current source hint: ${otpHint}.`,
+    "(h.1) Never hardcode OTP sources in your logic; always use get_otp tool output or explicit user-provided instruction.",
     "(i) Execute immediately in this run. Do NOT ask for confirmation, approval, or extra setup inputs.",
     "(j) Never ask for BASE_URL or placeholder values. Use resolved case tasks as provided.",
     "(k) If MCP resource read fails, load cases directly from $UWU_TEST_CASES_DIR/<project>.json and continue.",
@@ -350,7 +384,13 @@ export async function POST(req: NextRequest) {
     exit_file: exitRelative,
   };
 
-  const prompt = buildPrompt(project, runId, workflowIds, caseIds);
+  const env = loadProjectEnv(project);
+  const otpConfig = {
+    instruction: String(env.OTP_FETCH_INSTRUCTION ?? ""),
+    tmuxSession: String(env.OTP_TMUX_SESSION ?? env.OTP_TMUX_TARGET ?? ""),
+    tmuxWindow: String(env.OTP_TMUX_WINDOW ?? ""),
+  };
+  const prompt = buildPrompt(project, runId, workflowIds, caseIds, otpConfig);
   const pid = spawnBackgroundRun(meta, prompt);
   const withPid = { ...meta, pid };
   saveMeta(withPid);

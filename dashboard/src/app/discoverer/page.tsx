@@ -204,20 +204,21 @@ function isDiscovererResponse(value: unknown): value is DiscovererResponse {
   return true;
 }
 
-function docsPathFromRun(run: DiscoverRun): string {
-  if (!run.response || !isDiscovererResponse(run.response)) return "";
-  return run.response.persisted.knowledgeFile ?? "";
+function specPathFromRun(run: DiscoverRun): string {
+  if (run.response && isDiscovererResponse(run.response)) {
+    const specFile = run.response.persisted.specFile;
+    if (typeof specFile === "string" && specFile.trim()) {
+      return specFile;
+    }
+  }
+  return run.specSavePath ?? "";
 }
 
 export default function DiscovererPage() {
   const [workspacePath, setWorkspacePath] = useState("");
   const [project, setProject] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
-  const [persistTests, setPersistTests] = useState(true);
-  const [persistDocs, setPersistDocs] = useState(true);
   const [specSavePath, setSpecSavePath] = useState("");
-  const [testSavePath, setTestSavePath] = useState("");
-  const [docsSavePath, setDocsSavePath] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<DiscovererResponse | null>(null);
@@ -253,13 +254,9 @@ export default function DiscovererPage() {
     setProject((prev) => prev || inferred);
   }, [workspacePath]);
 
-  const reviewTargets = useMemo(
-    () => [result?.persisted.specFile, result?.persisted.testCasesFile, result?.persisted.knowledgeFile].filter(Boolean) as string[],
-    [result]
-  );
+  const reviewTargets = useMemo(() => [result?.persisted.specFile].filter(Boolean) as string[], [result]);
 
   const canRun = workspacePath.trim().length > 0 && project.trim().length > 0 && sourceUrl.trim().length > 0 && !loading;
-  const testCaseCount = useMemo(() => result?.testConfig.test_cases.length ?? 0, [result]);
   const visibleRuns = useMemo(
     () => discoverRuns.filter((run) => !dismissedRunIds.includes(run.run_id)),
     [discoverRuns, dismissedRunIds]
@@ -328,11 +325,9 @@ export default function DiscovererPage() {
           workspacePath,
           project,
           sourceUrl,
-          persistTests,
-          persistDocs,
+          persistTests: false,
+          persistDocs: false,
           specSavePath: specSavePath || undefined,
-          testSavePath: testSavePath || undefined,
-          docsSavePath: docsSavePath || undefined,
         }),
       });
       const data = (await res.json()) as { error?: string; run_id?: string; target?: DiscoverTarget; project?: string };
@@ -354,11 +349,9 @@ export default function DiscovererPage() {
               project,
               workspacePath,
               sourceUrl,
-              persistTests,
-              persistDocs,
+              persistTests: false,
+              persistDocs: false,
               specSavePath: specSavePath || undefined,
-              testSavePath: testSavePath || undefined,
-              docsSavePath: docsSavePath || undefined,
               status: "running",
               started_at: now,
               pid: 0,
@@ -373,7 +366,7 @@ export default function DiscovererPage() {
     } finally {
       setLoading(false);
     }
-  }, [canRun, workspacePath, project, sourceUrl, persistTests, persistDocs, specSavePath, testSavePath, docsSavePath, loadDiscoverRuns]);
+  }, [canRun, workspacePath, project, sourceUrl, specSavePath, loadDiscoverRuns]);
 
   const loadHistory = useCallback(async (slug: string) => {
     if (!slug.trim()) {
@@ -543,7 +536,7 @@ export default function DiscovererPage() {
         <div>
           <h1 className="text-lg font-bold" style={{ color: "#e2e8f0" }}>Discoverer</h1>
           <p className="text-xs" style={{ color: "#4a5568" }}>
-            Analyze a workspace, generate test cases/docs in background, then review and commit generated artifacts.
+            Analyze a workspace, generate Playwright spec in background, then review and commit generated artifacts.
           </p>
         </div>
       </div>
@@ -607,11 +600,6 @@ export default function DiscovererPage() {
                 <div className="text-[11px] mt-0.5" style={{ color: "#94a3b8" }}>
                   started {formatTime(run.started_at)}
                 </div>
-                {run.status === "completed" && docsPathFromRun(run) && (
-                  <div className="text-[11px] mt-0.5 font-mono truncate" style={{ color: "#7dd3fc" }}>
-                    docs: {docsPathFromRun(run)}
-                  </div>
-                )}
                 {run.status === "failed" && run.summary && (
                   <pre className="text-[10px] mt-1 rounded p-1 overflow-x-auto whitespace-pre-wrap break-all" style={{ background: "rgba(0,0,0,0.3)", color: "#f87171", maxHeight: "8rem" }}>
                     {run.summary.slice(-800)}
@@ -668,10 +656,10 @@ export default function DiscovererPage() {
           </div>
         </div>
 
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
-              Save generated Playwright spec to:
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
+                Save generated Playwright spec to:
             </span>
             <div className="flex items-center gap-2">
               <FolderTreePicker
@@ -699,71 +687,9 @@ export default function DiscovererPage() {
             </div>
           )}
 
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
-              <input type="checkbox" checked={persistTests} onChange={(e) => setPersistTests(e.target.checked)} />
-              Save generated tests to:
-            </label>
-            {persistTests && (
-              <div className="flex items-center gap-2">
-                <FolderTreePicker
-                  value={testSavePath}
-                  onSelect={setTestSavePath}
-                  compact
-                  placeholder="Default (regression_tests/test_cases)"
-                />
-                {testSavePath && (
-                  <button
-                    type="button"
-                    onClick={() => setTestSavePath("")}
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ color: "#94a3b8", background: "rgba(30,45,74,0.5)", border: "1px solid #1e2d4a" }}
-                    title="Reset to default location"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          {persistTests && testSavePath && (
-            <div className="text-[11px] font-mono ml-6 truncate" style={{ color: "#4a5568" }} title={testSavePath}>
-              {testSavePath}
+            <div className="text-[11px] ml-0" style={{ color: "#64748b" }}>
+              Discoverer currently saves only Playwright specs from this page.
             </div>
-          )}
-
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs flex items-center gap-2" style={{ color: "#94a3b8" }}>
-              <input type="checkbox" checked={persistDocs} onChange={(e) => setPersistDocs(e.target.checked)} />
-              Save generated docs to:
-            </label>
-            {persistDocs && (
-              <div className="flex items-center gap-2">
-                <FolderTreePicker
-                  value={docsSavePath}
-                  onSelect={setDocsSavePath}
-                  compact
-                  placeholder="Default (openclaw/data/knowledge)"
-                />
-                {docsSavePath && (
-                  <button
-                    type="button"
-                    onClick={() => setDocsSavePath("")}
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ color: "#94a3b8", background: "rgba(30,45,74,0.5)", border: "1px solid #1e2d4a" }}
-                    title="Reset to default location"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-          {persistDocs && docsSavePath && (
-            <div className="text-[11px] font-mono ml-6 truncate" style={{ color: "#4a5568" }} title={docsSavePath}>
-              {docsSavePath}
-            </div>
-          )}
         </div>
 
         <div className="flex flex-wrap gap-2">
@@ -814,9 +740,77 @@ export default function DiscovererPage() {
         )}
       </div>
 
+      <div className="card p-4 space-y-3" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 12 }}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <div>
+            <div className="text-sm font-semibold" style={{ color: "#e2e8f0" }}>Run History</div>
+            <div className="text-xs" style={{ color: "#94a3b8" }}>Browse older Discoverer runs for this project.</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => void loadDiscoverRuns(project)}
+            disabled={!project.trim()}
+            className="px-3 py-1.5 rounded text-xs"
+            style={{
+              background: "rgba(30,45,74,0.6)",
+              color: project.trim() ? "#00d4ff" : "#4a5568",
+              border: "1px solid #1e2d4a",
+            }}
+          >
+            Refresh Runs
+          </button>
+        </div>
+
+        {!project.trim() ? (
+          <div className="text-xs px-3 py-2 rounded" style={{ color: "#94a3b8", background: "rgba(15,23,42,0.7)", border: "1px solid #1e2d4a" }}>
+            Enter a project slug to load run history.
+          </div>
+        ) : discoverRuns.length === 0 ? (
+          <div className="text-xs px-3 py-2 rounded" style={{ color: "#94a3b8", background: "rgba(15,23,42,0.7)", border: "1px solid #1e2d4a" }}>
+            No Discoverer runs yet for this project.
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[320px] overflow-auto pr-1">
+            {discoverRuns.map((run) => (
+              <details
+                key={run.run_id}
+                className="rounded"
+                style={{ background: "#0f172a", border: "1px solid #1e2d4a" }}
+              >
+                <summary className="px-3 py-2 cursor-pointer list-none flex items-center justify-between gap-2">
+                  <span className="text-xs font-mono" style={{ color: "#e2e8f0" }}>
+                    {run.run_id}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded uppercase" style={{ color: run.status === "completed" ? "#22c55e" : run.status === "failed" ? "#ef4444" : "#00d4ff", border: `1px solid ${run.status === "completed" ? "#22c55e55" : run.status === "failed" ? "#ef444455" : "#00d4ff55"}` }}>
+                    {run.status}
+                  </span>
+                </summary>
+                <div className="px-3 pb-3 space-y-1 text-xs" style={{ color: "#94a3b8", borderTop: "1px solid #1e2d4a" }}>
+                  <div>target: <span className="font-mono" style={{ color: targetColor(run.target) }}>{run.target}</span></div>
+                  <div>started: <span className="font-mono" style={{ color: "#e2e8f0" }}>{formatTime(run.started_at)}</span></div>
+                  {run.completed_at && <div>completed: <span className="font-mono" style={{ color: "#e2e8f0" }}>{formatTime(run.completed_at)}</span></div>}
+                  <div>workspace: <span className="font-mono break-all" style={{ color: "#e2e8f0" }}>{run.workspacePath}</span></div>
+                  {run.sourceUrl && <div>url: <span className="font-mono break-all" style={{ color: "#e2e8f0" }}>{run.sourceUrl}</span></div>}
+                  {specPathFromRun(run) && (
+                    <div>
+                      spec: <span className="font-mono break-all" style={{ color: "#7dd3fc" }}>{specPathFromRun(run)}</span>
+                    </div>
+                  )}
+                  {run.summary && (
+                    <pre className="text-[10px] mt-1 rounded p-1 overflow-x-auto whitespace-pre-wrap break-all" style={{ background: "rgba(0,0,0,0.3)", color: run.status === "failed" ? "#f87171" : "#94a3b8", maxHeight: "8rem" }}>
+                      {run.summary}
+                    </pre>
+                  )}
+                </div>
+              </details>
+            ))}
+          </div>
+        )}
+      </div>
+
       {result && (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="card p-3" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 10 }}>
               <div className="text-xs" style={{ color: "#4a5568" }}>Project</div>
               <div className="text-sm font-semibold" style={{ color: "#e2e8f0" }}>{result.project}</div>
@@ -825,31 +819,13 @@ export default function DiscovererPage() {
               <div className="text-xs" style={{ color: "#4a5568" }}>Scanned files</div>
               <div className="text-sm font-semibold" style={{ color: "#e2e8f0" }}>{result.context.fileCount}</div>
             </div>
-            <div className="card p-3" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 10 }}>
-              <div className="text-xs" style={{ color: "#4a5568" }}>Generated test cases</div>
-              <div className="text-sm font-semibold" style={{ color: "#e2e8f0" }}>{testCaseCount}</div>
-            </div>
           </div>
 
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-1 gap-4">
             <div className="card p-3 space-y-2" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 10 }}>
               <div className="text-xs font-semibold" style={{ color: "#7dd3fc" }}>Generated Playwright spec</div>
               <pre className="text-xs overflow-auto rounded p-3 whitespace-pre-wrap" style={{ background: "#0f172a", color: "#e2e8f0", maxHeight: 420 }}>
                 {result.spec}
-              </pre>
-            </div>
-
-            <div className="card p-3 space-y-2" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 10 }}>
-              <div className="text-xs font-semibold" style={{ color: "#00d4ff" }}>Generated test config</div>
-              <pre className="text-xs overflow-auto rounded p-3" style={{ background: "#0f172a", color: "#e2e8f0", maxHeight: 420 }}>
-                {JSON.stringify(result.testConfig, null, 2)}
-              </pre>
-            </div>
-
-            <div className="card p-3 space-y-2" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 10 }}>
-              <div className="text-xs font-semibold" style={{ color: "#00ff88" }}>Generated agent docs</div>
-              <pre className="text-xs overflow-auto rounded p-3 whitespace-pre-wrap" style={{ background: "#0f172a", color: "#e2e8f0", maxHeight: 420 }}>
-                {result.agentDocs}
               </pre>
             </div>
           </div>
@@ -861,21 +837,6 @@ export default function DiscovererPage() {
             {result.persisted.specFile && (
               <div>
                 Saved spec ({result.persisted.specMode ?? "created"}): {result.persisted.specFile}
-              </div>
-            )}
-            {result.persisted.testCasesFile && (
-              <div>
-                Saved tests ({result.persisted.testsMode ?? "created"}): {result.persisted.testCasesFile}
-              </div>
-            )}
-            {result.persisted.testsMerge && (
-              <div>
-                Tests merge: +{result.persisted.testsMerge.addedCaseIds.length} case(s), +{result.persisted.testsMerge.addedWorkflowIds.length} workflow(s), reused {result.persisted.testsMerge.reusedCaseIds.length} case(s) and {result.persisted.testsMerge.reusedWorkflowIds.length} workflow(s)
-              </div>
-            )}
-            {result.persisted.knowledgeFile && (
-              <div>
-                Saved docs ({result.persisted.docsMode ?? "created"}): {result.persisted.knowledgeFile}
               </div>
             )}
             {result.persisted.generationModel && (
@@ -915,7 +876,7 @@ export default function DiscovererPage() {
 
             {reviewTargets.length === 0 && (
               <div className="text-xs px-3 py-2 rounded" style={{ color: "#f59e0b", background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.3)" }}>
-                Enable at least one persist option to review and commit generated files.
+                No spec output file available yet for review.
               </div>
             )}
 
@@ -1001,7 +962,10 @@ export default function DiscovererPage() {
             )}
           </div>
 
-          <div className="card p-4 space-y-3" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 12 }}>
+        </div>
+      )}
+
+      <div className="card p-4 space-y-3" style={{ background: "rgba(30,45,74,0.35)", border: "1px solid #1e2d4a", borderRadius: 12 }}>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div>
                 <div className="text-sm font-semibold" style={{ color: "#e2e8f0" }}>History</div>
@@ -1105,8 +1069,6 @@ export default function DiscovererPage() {
               </div>
             )}
           </div>
-        </div>
-      )}
     </div>
   );
 }

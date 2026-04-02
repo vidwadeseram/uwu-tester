@@ -1,210 +1,174 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execFile } from "child_process";
-import fs from "fs";
-import path from "path";
-import { resolveWorkspacePath } from "@/app/lib/discoverer";
+import { Client } from "pg";
 
-const IGNORE_DIRS = new Set([".git", "node_modules", ".next", "dist", "build", "coverage", ".venv", "venv", "__pycache__"]);
-const DB_EXTENSIONS = new Set([".db", ".sqlite", ".sqlite3"]);
+type SupportedDbType = "postgres";
 
-interface DbFileEntry {
-  path: string;
-  name: string;
-  bytes: number;
-  updatedAt: string;
+interface DbConnectionInput {
+  dbType: SupportedDbType;
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
 }
 
-function isInside(root: string, candidate: string): boolean {
-  const rootResolved = path.resolve(root);
-  const candidateResolved = path.resolve(candidate);
-  return candidateResolved === rootResolved || candidateResolved.startsWith(`${rootResolved}${path.sep}`);
+function normalizeIdentifier(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (!/^[A-Za-z_][A-Za-z0-9_$]*$/.test(trimmed)) return null;
+  return trimmed;
 }
 
-function listDatabases(workspacePath: string): DbFileEntry[] {
-  const results: DbFileEntry[] = [];
-  const stack = [workspacePath];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const abs = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        if (!IGNORE_DIRS.has(entry.name)) stack.push(abs);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!DB_EXTENSIONS.has(ext)) continue;
-      try {
-        const stat = fs.statSync(abs);
-        results.push({
-          path: abs,
-          name: path.basename(abs),
-          bytes: stat.size,
-          updatedAt: stat.mtime.toISOString(),
-        });
-      } catch {
-        continue;
-      }
-    }
+function quoteIdent(identifier: string): string {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+function parseTableRef(rawTable: string): { schema: string; table: string } | null {
+  const trimmed = rawTable.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(".").map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 1) {
+    const table = normalizeIdentifier(parts[0]);
+    if (!table) return null;
+    return { schema: "public", table };
   }
-  results.sort((a, b) => a.name.localeCompare(b.name));
-  return results;
+  if (parts.length === 2) {
+    const schema = normalizeIdentifier(parts[0]);
+    const table = normalizeIdentifier(parts[1]);
+    if (!schema || !table) return null;
+    return { schema, table };
+  }
+  return null;
 }
 
-function runPythonJson<T>(mode: string, payload: Record<string, unknown>): Promise<T> {
-  const script = [
-    "import json, sqlite3, sys",
-    "mode = sys.argv[1]",
-    "payload = json.loads(sys.argv[2])",
-    "def q(name):",
-    "    return '\"' + str(name).replace('\"', '\"\"') + '\"'",
-    "if mode == 'tables':",
-    "    db_path = payload['dbPath']",
-    "    conn = sqlite3.connect(db_path)",
-    "    cur = conn.cursor()",
-    "    cur.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name\")",
-    "    names = [r[0] for r in cur.fetchall()]",
-    "    conn.close()",
-    "    print(json.dumps({'tables': names}))",
-    "elif mode == 'rows':",
-    "    db_path = payload['dbPath']",
-    "    table = payload['table']",
-    "    search = str(payload.get('search') or '').strip()",
-    "    offset = int(payload.get('offset') or 0)",
-    "    limit = max(1, min(int(payload.get('limit') or 50), 200))",
-    "    conn = sqlite3.connect(db_path)",
-    "    conn.row_factory = sqlite3.Row",
-    "    cur = conn.cursor()",
-    "    table_q = q(table)",
-    "    cur.execute(f'PRAGMA table_info({table_q})')",
-    "    columns = [r[1] for r in cur.fetchall()]",
-    "    where = ''",
-    "    params = []",
-    "    if search and columns:",
-    "        clauses = [f'CAST({q(c)} AS TEXT) LIKE ?' for c in columns]",
-    "        where = ' WHERE ' + ' OR '.join(clauses)",
-    "        params = ['%' + search + '%'] * len(columns)",
-    "    cur.execute(f'SELECT COUNT(*) FROM {table_q}' + where, params)",
-    "    total = int(cur.fetchone()[0])",
-    "    cur.execute(f'SELECT rowid as __rowid__, * FROM {table_q}' + where + ' ORDER BY rowid LIMIT ? OFFSET ?', params + [limit, offset])",
-    "    rows = []",
-    "    for item in cur.fetchall():",
-    "        row = {}",
-    "        for key in item.keys():",
-    "            value = item[key]",
-    "            if isinstance(value, bytes):",
-    "                row[key] = f'<bytes:{len(value)}>'",
-    "            else:",
-    "                row[key] = value",
-    "        rows.append(row)",
-    "    conn.close()",
-    "    print(json.dumps({'rows': rows, 'total': total, 'nextOffset': (offset + len(rows)) if (offset + len(rows)) < total else None}))",
-    "elif mode == 'delete':",
-    "    db_path = payload['dbPath']",
-    "    table = payload['table']",
-    "    rowids = payload.get('rowids') or []",
-    "    clean = []",
-    "    for value in rowids:",
-    "        try:",
-    "            clean.append(int(value))",
-    "        except Exception:",
-    "            pass",
-    "    if not clean:",
-    "        print(json.dumps({'deleted': 0}))",
-    "        sys.exit(0)",
-    "    conn = sqlite3.connect(db_path)",
-    "    cur = conn.cursor()",
-    "    table_q = q(table)",
-    "    marks = ','.join(['?'] * len(clean))",
-    "    cur.execute(f'DELETE FROM {table_q} WHERE rowid IN ({marks})', clean)",
-    "    deleted = cur.rowcount if cur.rowcount is not None else 0",
-    "    conn.commit()",
-    "    conn.close()",
-    "    print(json.dumps({'deleted': int(deleted)}))",
-    "else:",
-    "    raise SystemExit('unsupported mode')",
-  ].join("\n");
+function parseConnection(raw: unknown): DbConnectionInput | null {
+  if (!raw || typeof raw !== "object") return null;
+  const input = raw as Record<string, unknown>;
+  const dbType = String(input.dbType ?? "").trim();
+  const host = String(input.host ?? "").trim();
+  const database = String(input.database ?? "").trim();
+  const username = String(input.username ?? "").trim();
+  const password = String(input.password ?? "");
+  const portRaw = Number(input.port ?? 5432);
+  const port = Number.isFinite(portRaw) ? Math.floor(portRaw) : NaN;
 
-  return new Promise((resolve, reject) => {
-    execFile("python3", ["-c", script, mode, JSON.stringify(payload)], { timeout: 30_000, maxBuffer: 12 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (err) {
-        reject(new Error((stderr || String(err)).trim() || "python sqlite helper failed"));
-        return;
-      }
-      try {
-        resolve(JSON.parse((stdout || "").trim() || "{}") as T);
-      } catch {
-        reject(new Error(`Invalid sqlite helper output: ${stdout || stderr}`));
-      }
-    });
+  if (dbType !== "postgres") return null;
+  if (!host || !database || !username || !password) return null;
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
+
+  return {
+    dbType: "postgres",
+    host,
+    port,
+    database,
+    username,
+    password,
+  };
+}
+
+async function withPgClient<T>(connection: DbConnectionInput, fn: (client: Client) => Promise<T>): Promise<T> {
+  const client = new Client({
+    host: connection.host,
+    port: connection.port,
+    database: connection.database,
+    user: connection.username,
+    password: connection.password,
+    ssl: false,
+  });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
+
+async function loadTables(connection: DbConnectionInput): Promise<string[]> {
+  return withPgClient(connection, async (client) => {
+    const result = await client.query<{ table_schema: string; table_name: string }>(
+      `
+        SELECT table_schema, table_name
+        FROM information_schema.tables
+        WHERE table_type = 'BASE TABLE'
+          AND table_schema NOT IN ('pg_catalog', 'information_schema')
+        ORDER BY table_schema, table_name
+      `
+    );
+    return result.rows.map((row) => `${row.table_schema}.${row.table_name}`);
   });
 }
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const workspaceRaw = (searchParams.get("workspacePath") ?? "").trim();
-  const workspacePath = resolveWorkspacePath(workspaceRaw);
-  if (!workspacePath) {
-    return NextResponse.json({ error: "workspacePath must be under allowed roots" }, { status: 400 });
-  }
+async function loadRows(
+  connection: DbConnectionInput,
+  tableRef: { schema: string; table: string },
+  options: { search: string; offset: number; limit: number }
+): Promise<{ rows: Array<Record<string, unknown>>; total: number; nextOffset: number | null }> {
+  return withPgClient(connection, async (client) => {
+    const columnsResult = await client.query<{ column_name: string }>(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+        ORDER BY ordinal_position
+      `,
+      [tableRef.schema, tableRef.table]
+    );
+    const columns = columnsResult.rows.map((row) => row.column_name).filter(Boolean);
+    const fromClause = `${quoteIdent(tableRef.schema)}.${quoteIdent(tableRef.table)}`;
 
-  const action = (searchParams.get("action") ?? "databases").trim();
-  const search = (searchParams.get("search") ?? "").trim().toLowerCase();
-  const offset = Math.max(0, Number(searchParams.get("offset") ?? "0") || 0);
-  const limit = Math.max(1, Math.min(200, Number(searchParams.get("limit") ?? "50") || 50));
-
-  if (action === "databases") {
-    const all = listDatabases(workspacePath);
-    const filtered = search
-      ? all.filter((entry) => entry.name.toLowerCase().includes(search) || entry.path.toLowerCase().includes(search))
-      : all;
-    const items = filtered.slice(offset, offset + limit);
-    const nextOffset = offset + items.length < filtered.length ? offset + items.length : null;
-    return NextResponse.json({ items, total: filtered.length, nextOffset });
-  }
-
-  const dbPathRaw = (searchParams.get("dbPath") ?? "").trim();
-  const dbPath = path.resolve(dbPathRaw);
-  if (!dbPathRaw || !isInside(workspacePath, dbPath) || !fs.existsSync(dbPath)) {
-    return NextResponse.json({ error: "dbPath must exist under workspacePath" }, { status: 400 });
-  }
-
-  if (action === "tables") {
-    try {
-      const data = await runPythonJson<{ tables: string[] }>("tables", { dbPath });
-      return NextResponse.json({ tables: data.tables ?? [] });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return NextResponse.json({ error: message }, { status: 500 });
+    const whereClauses: string[] = [];
+    const searchValue = options.search.trim();
+    if (searchValue && columns.length > 0) {
+      const orClauses = columns.map((column) => `CAST(${quoteIdent(column)} AS TEXT) ILIKE $1`);
+      whereClauses.push(`(${orClauses.join(" OR ")})`);
     }
-  }
+    const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+    const searchParams = searchValue ? [`%${searchValue}%`] : [];
 
-  if (action === "rows") {
-    const table = (searchParams.get("table") ?? "").trim();
-    if (!table) return NextResponse.json({ error: "table is required" }, { status: 400 });
-    try {
-      const data = await runPythonJson<{ rows: Array<Record<string, unknown>>; total: number; nextOffset?: number | null }>("rows", {
-        dbPath,
-        table,
-        search: searchParams.get("search") ?? "",
-        offset,
-        limit,
-      });
-      return NextResponse.json(data);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return NextResponse.json({ error: message }, { status: 500 });
-    }
-  }
+    const countResult = await client.query<{ total: string }>(
+      `SELECT COUNT(*)::bigint AS total FROM ${fromClause} ${whereSql}`,
+      searchParams
+    );
+    const total = Number(countResult.rows[0]?.total ?? 0);
 
-  return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
+    const paginationBase = searchParams.length;
+    const rowsResult = await client.query<Record<string, unknown>>(
+      `
+        SELECT ctid::text AS "__rowid__", *
+        FROM ${fromClause}
+        ${whereSql}
+        ORDER BY ctid
+        LIMIT $${paginationBase + 1}
+        OFFSET $${paginationBase + 2}
+      `,
+      [...searchParams, options.limit, options.offset]
+    );
+
+    const nextOffset = options.offset + rowsResult.rows.length < total ? options.offset + rowsResult.rows.length : null;
+    return {
+      rows: rowsResult.rows,
+      total,
+      nextOffset,
+    };
+  });
+}
+
+async function deleteRows(
+  connection: DbConnectionInput,
+  tableRef: { schema: string; table: string },
+  rowids: string[]
+): Promise<number> {
+  return withPgClient(connection, async (client) => {
+    const unique = Array.from(new Set(rowids.map((id) => String(id).trim()).filter(Boolean)));
+    if (unique.length === 0) return 0;
+
+    const fromClause = `${quoteIdent(tableRef.schema)}.${quoteIdent(tableRef.table)}`;
+    const result = await client.query(
+      `DELETE FROM ${fromClause} WHERE ctid::text = ANY($1::text[])`,
+      [unique]
+    );
+    return result.rowCount ?? 0;
+  });
 }
 
 export async function POST(req: NextRequest) {
@@ -219,32 +183,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Body must be an object" }, { status: 400 });
   }
 
-  const parsed = body as Record<string, unknown>;
-  const action = String(parsed.action ?? "").trim();
-  if (action !== "delete") {
-    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
-  }
-
-  const workspaceRaw = typeof parsed.workspacePath === "string" ? parsed.workspacePath.trim() : "";
-  const workspacePath = resolveWorkspacePath(workspaceRaw);
-  if (!workspacePath) {
-    return NextResponse.json({ error: "workspacePath must be under allowed roots" }, { status: 400 });
-  }
-
-  const dbPathRaw = typeof parsed.dbPath === "string" ? parsed.dbPath.trim() : "";
-  const table = typeof parsed.table === "string" ? parsed.table.trim() : "";
-  const rowids = Array.isArray(parsed.rowids) ? parsed.rowids : [];
-  const dbPath = path.resolve(dbPathRaw);
-
-  if (!dbPathRaw || !table || !isInside(workspacePath, dbPath) || !fs.existsSync(dbPath)) {
-    return NextResponse.json({ error: "Invalid dbPath/table" }, { status: 400 });
+  const input = body as Record<string, unknown>;
+  const action = String(input.action ?? "").trim();
+  const connection = parseConnection(input.connection);
+  if (!connection) {
+    return NextResponse.json({ error: "Valid postgres connection credentials are required" }, { status: 400 });
   }
 
   try {
-    const data = await runPythonJson<{ deleted: number }>("delete", { dbPath, table, rowids });
-    return NextResponse.json({ success: true, deleted: data.deleted ?? 0 });
+    if (action === "tables") {
+      const tables = await loadTables(connection);
+      return NextResponse.json({ tables });
+    }
+
+    if (action === "rows") {
+      const tableRef = parseTableRef(String(input.table ?? ""));
+      if (!tableRef) {
+        return NextResponse.json({ error: "table must be schema.table or table" }, { status: 400 });
+      }
+      const search = String(input.search ?? "");
+      const offsetRaw = Number(input.offset ?? 0);
+      const limitRaw = Number(input.limit ?? 50);
+      const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.floor(offsetRaw)) : 0;
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50;
+      const data = await loadRows(connection, tableRef, { search, offset, limit });
+      return NextResponse.json(data);
+    }
+
+    if (action === "delete") {
+      const tableRef = parseTableRef(String(input.table ?? ""));
+      if (!tableRef) {
+        return NextResponse.json({ error: "table must be schema.table or table" }, { status: 400 });
+      }
+      const rowids = Array.isArray(input.rowids) ? input.rowids.map((value) => String(value)) : [];
+      const deleted = await deleteRows(connection, tableRef, rowids);
+      return NextResponse.json({ success: true, deleted });
+    }
+
+    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message || "Database operation failed" }, { status: 500 });
   }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    supported: ["postgres"],
+    actions: ["tables", "rows", "delete"],
+  });
 }

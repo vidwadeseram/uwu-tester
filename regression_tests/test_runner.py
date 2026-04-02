@@ -408,9 +408,47 @@ def _extract_latest_otp(text: str) -> str:
     return ""
 
 
+def _tmux_target_from_instruction(instruction: str) -> tuple[str, str]:
+    text = (instruction or "").strip()
+    if not text:
+        return "", ""
+
+    direct = re.search(r"([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)", text)
+    if direct:
+        return direct.group(1), direct.group(2)
+
+    session_match = re.search(r"\bsession\s*(?:=|:)?\s*['\"]?([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
+    window_match = re.search(r"\b(?:window|tab|pane)\s*(?:=|:)?\s*['\"]?([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
+
+    session = session_match.group(1) if session_match else ""
+    window = window_match.group(1) if window_match else ""
+    return session, window
+
+
 def _read_otp_from_tmux(env: dict[str, str]) -> tuple[str, str]:
-    session = env.get("OTP_TMUX_SESSION", "allinonepos").strip() or "allinonepos"
-    window = env.get("OTP_TMUX_WINDOW", "pos-commons").strip()
+    instruction = env.get("OTP_FETCH_INSTRUCTION", "").strip()
+    target = env.get("OTP_TMUX_TARGET", "").strip()
+    session = env.get("OTP_TMUX_SESSION", "").strip()
+    window = env.get("OTP_TMUX_WINDOW", "").strip()
+
+    if target and not session:
+        if ":" in target:
+            maybe_session, maybe_window = target.split(":", 1)
+            session = maybe_session.strip()
+            window = maybe_window.strip()
+        else:
+            session = target
+
+    if not session:
+        inferred_session, inferred_window = _tmux_target_from_instruction(instruction)
+        if inferred_session:
+            session = inferred_session
+        if inferred_window and not window:
+            window = inferred_window
+
+    if not session:
+        return "", "unconfigured tmux target"
+
     lines = env.get("OTP_TMUX_CAPTURE_LINES", "800").strip()
     line_count = lines if lines.isdigit() else "800"
 
@@ -604,7 +642,7 @@ async def run_case_scripted(
                     filled = False
 
             if not filled:
-                return False, f"OTP found ({otp}) from {source} but OTP inputs were not fillable"
+                return False, f"OTP found from {source} but OTP inputs were not fillable"
 
             clicked = await _click_by_names(page, ["verify", "submit", "continue", "confirm"])
             await page.wait_for_timeout(3500)

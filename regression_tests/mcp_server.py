@@ -17,6 +17,8 @@ Tools:
 
 import json
 import os
+import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -52,6 +54,22 @@ TOOLS = [
                 "results_json": {"type": "string", "description": "JSON string of the run result"},
             },
             "required": ["project", "results_json"],
+        },
+    },
+    {
+        "name": "get_otp",
+        "description": (
+            "Retrieve OTP for a project using configured source details. "
+            "Reads project env vars (OTP_FETCH_INSTRUCTION / OTP_TMUX_SESSION / OTP_TMUX_WINDOW) "
+            "and can accept an instruction override."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Project slug"},
+                "instruction": {"type": "string", "description": "Optional OTP retrieval instruction override"},
+            },
+            "required": ["project"],
         },
     },
 ]
@@ -205,17 +223,130 @@ def tool_save_results(project: str, results_json: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-def call_tool(name: str, args: dict) -> str:
+def _extract_latest_otp(text: str) -> str:
+    patterns = [
+        r"(?:otp|verification code|one[- ]?time password|code)\D{0,20}(\d{4,8})",
+        r"\b(\d{6})\b",
+        r"\b(\d{4})\b",
+    ]
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in reversed(lines):
+        lowered = line.lower()
+        if "otp" not in lowered and "verification" not in lowered and "code" not in lowered:
+            continue
+        for pattern in patterns:
+            found = re.findall(pattern, line, flags=re.IGNORECASE)
+            if found:
+                return found[-1]
+
+    whole = "\n".join(lines[-200:])
+    for pattern in patterns:
+        found = re.findall(pattern, whole, flags=re.IGNORECASE)
+        if found:
+            return found[-1]
+    return ""
+
+
+def _tmux_target_from_instruction(instruction: str) -> tuple[str, str]:
+    text = (instruction or "").strip()
+    if not text:
+        return "", ""
+
+    direct = re.search(r"([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+)", text)
+    if direct:
+        return direct.group(1), direct.group(2)
+
+    session_match = re.search(r"\bsession\s*(?:=|:)?\s*['\"]?([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
+    window_match = re.search(r"\b(?:window|tab|pane)\s*(?:=|:)?\s*['\"]?([A-Za-z0-9_.-]+)", text, flags=re.IGNORECASE)
+    session = session_match.group(1) if session_match else ""
+    window = window_match.group(1) if window_match else ""
+    return session, window
+
+
+def _read_otp_from_tmux(session: str, window: str, capture_lines: str) -> tuple[str, str]:
+    line_count = capture_lines if capture_lines.isdigit() else "800"
+    targets = [f"{session}:{window}"] if window else []
+    targets.append(session)
+
+    for target in targets:
+        try:
+            capture = subprocess.run(
+                ["tmux", "capture-pane", "-pt", target, "-S", f"-{line_count}"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            continue
+
+        output = (capture.stdout or "") + "\n" + (capture.stderr or "")
+        otp = _extract_latest_otp(output)
+        if otp:
+            return otp, target
+
+    return "", session if not window else f"{session}:{window}"
+
+
+def tool_get_otp(project: str, instruction_override: str = "") -> str:
+    env = read_project_env(project)
+    instruction = (instruction_override or env.get("OTP_FETCH_INSTRUCTION", "")).strip()
+    target = env.get("OTP_TMUX_TARGET", "").strip()
+    session = env.get("OTP_TMUX_SESSION", "").strip()
+    window = env.get("OTP_TMUX_WINDOW", "").strip()
+    capture_lines = env.get("OTP_TMUX_CAPTURE_LINES", "800").strip() or "800"
+
+    if target and not session:
+        if ":" in target:
+            parts = target.split(":", 1)
+            session = parts[0].strip()
+            window = parts[1].strip()
+        else:
+            session = target
+
+    if not session:
+        inferred_session, inferred_window = _tmux_target_from_instruction(instruction)
+        if inferred_session:
+            session = inferred_session
+        if inferred_window and not window:
+            window = inferred_window
+
+    if not session:
+        return json.dumps({
+            "otp": "",
+            "source": "",
+            "error": "No OTP source configured. Set OTP_TMUX_SESSION or OTP_FETCH_INSTRUCTION.",
+        })
+
+    otp, source = _read_otp_from_tmux(session, window, capture_lines)
+    if not otp:
+        return json.dumps({
+            "otp": "",
+            "source": source,
+            "instruction": instruction,
+            "error": "OTP not found from configured tmux source",
+        })
+
+    return json.dumps({
+        "otp": otp,
+        "source": source,
+        "instruction": instruction,
+    })
+
+
+def call_tool(name: str, args: dict[str, object]) -> str:
     if name == "get_run_status":
         return tool_get_run_status(args["project"])
     if name == "save_results":
         return tool_save_results(args["project"], args["results_json"])
+    if name == "get_otp":
+        return tool_get_otp(args["project"], str(args.get("instruction") or ""))
     raise ValueError(f"Unknown tool: {name}")
 
 
 # ── JSON-RPC dispatcher ───────────────────────────────────────────────────────
 
-def send(obj: dict):
+def send(obj: dict[str, object]):
     sys.stdout.write(json.dumps(obj) + "\n")
     sys.stdout.flush()
 
@@ -228,7 +359,7 @@ def send_error(id_, code: int, message: str):
     send({"jsonrpc": "2.0", "id": id_, "error": {"code": code, "message": message}})
 
 
-def handle(msg: dict):
+def handle(msg: dict[str, object]):
     method = msg.get("method", "")
     id_ = msg.get("id")
     params = msg.get("params") or {}
