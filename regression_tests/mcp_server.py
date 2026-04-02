@@ -290,7 +290,9 @@ def _read_otp_from_tmux(session: str, window: str, capture_lines: str) -> tuple[
 
 def tool_get_otp(project: str, instruction_override: str = "") -> str:
     env = read_project_env(project)
-    instruction = (instruction_override or env.get("OTP_FETCH_INSTRUCTION", "")).strip()
+    env_instruction = env.get("OTP_FETCH_INSTRUCTION", "").strip()
+    override_instruction = (instruction_override or "").strip()
+    instruction = override_instruction or env_instruction
     target = env.get("OTP_TMUX_TARGET", "").strip()
     session = env.get("OTP_TMUX_SESSION", "").strip()
     window = env.get("OTP_TMUX_WINDOW", "").strip()
@@ -303,6 +305,12 @@ def tool_get_otp(project: str, instruction_override: str = "") -> str:
             window = parts[1].strip()
         else:
             session = target
+
+    if override_instruction:
+        inferred_session, inferred_window = _tmux_target_from_instruction(override_instruction)
+        if inferred_session:
+            session = inferred_session
+            window = inferred_window
 
     if not session:
         inferred_session, inferred_window = _tmux_target_from_instruction(instruction)
@@ -334,13 +342,25 @@ def tool_get_otp(project: str, instruction_override: str = "") -> str:
     })
 
 
+def _require_str_arg(args: dict[str, object], key: str) -> str:
+    value = args.get(key)
+    if isinstance(value, str):
+        return value
+    raise ValueError(f"Invalid argument '{key}': expected string")
+
+
 def call_tool(name: str, args: dict[str, object]) -> str:
     if name == "get_run_status":
-        return tool_get_run_status(args["project"])
+        return tool_get_run_status(_require_str_arg(args, "project"))
     if name == "save_results":
-        return tool_save_results(args["project"], args["results_json"])
+        return tool_save_results(
+            _require_str_arg(args, "project"),
+            _require_str_arg(args, "results_json"),
+        )
     if name == "get_otp":
-        return tool_get_otp(args["project"], str(args.get("instruction") or ""))
+        instruction = args.get("instruction")
+        instruction_text = instruction if isinstance(instruction, str) else ""
+        return tool_get_otp(_require_str_arg(args, "project"), instruction_text)
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -362,7 +382,8 @@ def send_error(id_, code: int, message: str):
 def handle(msg: dict[str, object]):
     method = msg.get("method", "")
     id_ = msg.get("id")
-    params = msg.get("params") or {}
+    params_obj = msg.get("params")
+    params: dict[str, object] = params_obj if isinstance(params_obj, dict) else {}
 
     if method == "initialize":
         send_result(id_, {
@@ -384,7 +405,8 @@ def handle(msg: dict[str, object]):
         send_result(id_, {"resources": RESOURCES, "resourceTemplates": _resource_templates()})
 
     elif method == "resources/read":
-        uri = params.get("uri", "")
+        uri_obj = params.get("uri")
+        uri = uri_obj if isinstance(uri_obj, str) else ""
         try:
             content = read_resource(uri)
             send_result(id_, {"contents": [{"uri": uri, "mimeType": "application/json", "text": content}]})
@@ -395,11 +417,20 @@ def handle(msg: dict[str, object]):
         send_result(id_, {"tools": TOOLS})
 
     elif method == "tools/call":
-        name = params.get("name", "")
-        args = params.get("arguments") or {}
+        name_obj = params.get("name")
+        name = name_obj if isinstance(name_obj, str) else ""
+        args_obj = params.get("arguments")
+        args: dict[str, object] = args_obj if isinstance(args_obj, dict) else {}
         try:
             result = call_tool(name, args)
-            send_result(id_, {"content": [{"type": "text", "text": result}]})
+            tool_result: dict[str, object] = {"content": [{"type": "text", "text": result}]}
+            try:
+                structured = json.loads(result)
+                if isinstance(structured, dict):
+                    tool_result["structuredContent"] = structured
+            except Exception:
+                pass
+            send_result(id_, tool_result)
         except Exception as e:
             send_error(id_, -32000, str(e))
 

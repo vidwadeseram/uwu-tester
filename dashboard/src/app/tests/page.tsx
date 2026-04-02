@@ -18,6 +18,7 @@ function McpModal({
   runMode,
   selectedWorkflowIds,
   selectedCaseIds,
+  otpConfig,
   onBackgroundStarted,
   onClose,
 }: {
@@ -26,6 +27,7 @@ function McpModal({
   runMode: RunSelectionMode;
   selectedWorkflowIds: string[];
   selectedCaseIds: string[];
+  otpConfig: { instruction: string; tmuxSession: string; tmuxWindow: string };
   onBackgroundStarted: (input: { target: McpTarget; runId: string; project: string }) => void;
   onClose: () => void;
 }) {
@@ -36,9 +38,9 @@ function McpModal({
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoError, setAutoError] = useState("");
   const [autoInfo, setAutoInfo] = useState("");
-  const [otpInstructionConfig, setOtpInstructionConfig] = useState("");
-  const [otpTmuxSessionConfig, setOtpTmuxSessionConfig] = useState("");
-  const [otpTmuxWindowConfig, setOtpTmuxWindowConfig] = useState("");
+  const [otpInstructionConfig, setOtpInstructionConfig] = useState(otpConfig.instruction);
+  const [otpTmuxSessionConfig, setOtpTmuxSessionConfig] = useState(otpConfig.tmuxSession);
+  const [otpTmuxWindowConfig, setOtpTmuxWindowConfig] = useState(otpConfig.tmuxWindow);
 
   useEffect(() => {
     fetch("/api/tests/mcp-info")
@@ -55,17 +57,13 @@ function McpModal({
       })
       .catch(() => {});
 
-    fetch(`/api/tests/env?project=${encodeURIComponent(project)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d && typeof d === "object") {
-          if (typeof d.OTP_FETCH_INSTRUCTION === "string") setOtpInstructionConfig(d.OTP_FETCH_INSTRUCTION);
-          if (typeof d.OTP_TMUX_SESSION === "string") setOtpTmuxSessionConfig(d.OTP_TMUX_SESSION);
-          if (typeof d.OTP_TMUX_WINDOW === "string") setOtpTmuxWindowConfig(d.OTP_TMUX_WINDOW);
-        }
-      })
-      .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setOtpInstructionConfig(otpConfig.instruction);
+    setOtpTmuxSessionConfig(otpConfig.tmuxSession);
+    setOtpTmuxWindowConfig(otpConfig.tmuxWindow);
+  }, [otpConfig.instruction, otpConfig.tmuxSession, otpConfig.tmuxWindow]);
 
   function copy(text: string, key: string) {
     navigator.clipboard.writeText(text).then(() => {
@@ -119,17 +117,17 @@ function McpModal({
     ? otpInstructionConfig.trim()
     : "Use project OTP source settings and call MCP tool get_otp before filling OTP fields.";
   const otpPromptLine = `For OTP retrieval, call MCP tool get_otp with project '${project}' and instruction '${otpInstructionText}'. Source hint: ${otpSourceHint || "not configured"}. Never hardcode OTP source values in prompts.`;
-  const claudePromptEffective = claudePrompt.replace(
-    "For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons.",
-    otpPromptLine
-  );
-  const opencodePromptEffective = opencodePrompt.replace(
-    "For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons.",
-    otpPromptLine
-  );
+  const legacyOtpLine = "For allinonepos OTP retrieval, read OTP from tmux session allinonepos window/tab pos-commons.";
+  const injectOtpInstruction = (promptText: string) =>
+    promptText.includes(legacyOtpLine)
+      ? promptText.replace(legacyOtpLine, otpPromptLine)
+      : `${promptText} ${otpPromptLine}`;
+  const shellQuote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
+  const claudePromptEffective = injectOtpInstruction(claudePrompt);
+  const opencodePromptEffective = injectOtpInstruction(opencodePrompt);
 
-  const claudeCmd = `sudo -u uwu bash -c 'cd /home/uwu && CLAUDE_MODEL=${testsClaudeModel} claude --dangerously-skip-permissions --model ${testsClaudeModel} -p "${claudePromptEffective}"'`;
-  const opencodeCmd = `sudo -u uwu opencode run --dir ${dir} --model ${testsOpencodeModel} "${opencodePromptEffective}"`;
+  const claudeCmd = `sudo -u uwu bash -lc ${shellQuote(`cd /home/uwu && CLAUDE_MODEL=${shellQuote(testsClaudeModel)} claude --dangerously-skip-permissions --model ${shellQuote(testsClaudeModel)} -p ${shellQuote(claudePromptEffective)}`)}`;
+  const opencodeCmd = `sudo -u uwu opencode run --dir ${shellQuote(dir)} --model ${shellQuote(testsOpencodeModel)} ${shellQuote(opencodePromptEffective)}`;
 
   const isClaudeCode = target === "claude";
   const isApi = target === "api";
@@ -1377,6 +1375,21 @@ export default function TestsPage() {
     setEnvSaving(false);
   }, []);
 
+  useEffect(() => {
+    if (!selectedProject) return;
+    const timer = setTimeout(() => {
+      void saveEnvVars({ ...envVars }, selectedProject);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [
+    selectedProject,
+    envVars.OTP_FETCH_INSTRUCTION,
+    envVars.OTP_TMUX_SESSION,
+    envVars.OTP_TMUX_WINDOW,
+    envVars.OTP_TMUX_CAPTURE_LINES,
+    saveEnvVars,
+  ]);
+
   // Poll run status
   const pollRunStatus = useCallback(async (slug: string) => {
     const res = await fetch(`/api/tests/run?project=${encodeURIComponent(slug)}`);
@@ -1537,9 +1550,12 @@ export default function TestsPage() {
     saveConfig(updated);
   };
 
-  const openWorkflowRun = (target: McpTarget, workflowId: string) => {
+  const openWorkflowRun = async (target: McpTarget, workflowId: string) => {
     setRunMode("workflows");
     setSelectedWorkflowIds([workflowId]);
+    if (selectedProject) {
+      await saveEnvVars({ ...envVars }, selectedProject);
+    }
     setMcpModal(target);
   };
 
@@ -2650,6 +2666,23 @@ export default function TestsPage() {
           )}
         </div>
       </div>
+
+      {mcpModal && selectedProject && (
+        <McpModal
+          target={mcpModal}
+          project={selectedProject}
+          runMode={runMode}
+          selectedWorkflowIds={selectedWorkflowIds}
+          selectedCaseIds={selectedCaseIds}
+          otpConfig={{
+            instruction: envVars.OTP_FETCH_INSTRUCTION ?? "",
+            tmuxSession: envVars.OTP_TMUX_SESSION ?? "",
+            tmuxWindow: envVars.OTP_TMUX_WINDOW ?? "",
+          }}
+          onBackgroundStarted={handleBackgroundStarted}
+          onClose={() => setMcpModal(null)}
+        />
+      )}
 
       {pickerOpen && (
         <div
