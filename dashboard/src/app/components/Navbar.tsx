@@ -180,8 +180,6 @@ export default function Navbar() {
             {/* Terminal — external link */}
             <a
               href="/terminal/"
-              target="_blank"
-              rel="noopener noreferrer"
               title="Terminal"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all"
               style={{ color: "#4a5568", borderBottom: "2px solid transparent" }}
@@ -262,8 +260,6 @@ export default function Navbar() {
           })}
           <a
             href="/terminal/"
-            target="_blank"
-            rel="noopener noreferrer"
             className="flex items-center gap-3 px-5 py-3 text-sm font-medium"
             style={{ color: "#94a3b8" }}
           >
