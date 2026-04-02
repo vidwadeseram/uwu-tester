@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -357,6 +357,11 @@ interface ORModel {
   vision: boolean;
 }
 
+interface AgentModelOption {
+  id: string;
+  name: string;
+}
+
 const DEFAULT_TESTS_MODEL = "openai/gpt-5.3-codex";
 const DEFAULT_TESTS_CLAUDE_MODEL = "sonnet";
 const DEFAULT_TESTS_OPENCODE_MODEL = "opencode/qwen3.6-plus-free";
@@ -364,13 +369,13 @@ const DEFAULT_DISCOVERER_API_MODEL = "openrouter/free";
 const DEFAULT_DISCOVERER_CLAUDE_MODEL = "sonnet";
 const DEFAULT_DISCOVERER_OPENCODE_MODEL = "opencode/qwen3.6-plus-free";
 
-const CLAUDE_CODE_MODELS = [
+const FALLBACK_CLAUDE_CODE_MODELS: AgentModelOption[] = [
   { id: "sonnet", name: "Sonnet (Claude Code default)" },
   { id: "opus", name: "Opus" },
   { id: "haiku", name: "Haiku" },
 ] as const;
 
-const OPENCODE_MODELS = [
+const FALLBACK_OPENCODE_MODELS: AgentModelOption[] = [
   { id: "opencode/qwen3.6-plus-free", name: "Qwen 3.6 Plus (free)" },
   { id: "opencode/big-pickle", name: "Big Pickle" },
   { id: "opencode/gpt-5-nano", name: "GPT-5 Nano" },
@@ -516,6 +521,8 @@ function ModelsSection() {
   const [discovererApiModel, setDiscovererApiModel] = useState(DEFAULT_DISCOVERER_API_MODEL);
   const [discovererClaudeModel, setDiscovererClaudeModel] = useState(DEFAULT_DISCOVERER_CLAUDE_MODEL);
   const [discovererOpencodeModel, setDiscovererOpencodeModel] = useState(DEFAULT_DISCOVERER_OPENCODE_MODEL);
+  const [claudeModelOptions, setClaudeModelOptions] = useState<AgentModelOption[]>(FALLBACK_CLAUDE_CODE_MODELS);
+  const [opencodeModelOptions, setOpencodeModelOptions] = useState<AgentModelOption[]>(FALLBACK_OPENCODE_MODELS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -534,6 +541,12 @@ function ModelsSection() {
         else if (d.selected?.discoverer) setDiscovererApiModel(d.selected.discoverer);
         if (d.selected?.discoverer_claude) setDiscovererClaudeModel(d.selected.discoverer_claude);
         if (d.selected?.discoverer_opencode) setDiscovererOpencodeModel(d.selected.discoverer_opencode);
+        if (Array.isArray(d.claude_models) && d.claude_models.length > 0) {
+          setClaudeModelOptions(d.claude_models);
+        }
+        if (Array.isArray(d.opencode_models) && d.opencode_models.length > 0) {
+          setOpencodeModelOptions(d.opencode_models);
+        }
         if (d.error) setError(d.error);
       })
       .catch(() => setError("Failed to load models"))
@@ -563,6 +576,32 @@ function ModelsSection() {
   }
 
   const freeCount = models.filter((m) => m.free).length;
+
+  const effectiveClaudeModelOptions = useMemo(() => {
+    const map = new Map<string, AgentModelOption>();
+    for (const option of claudeModelOptions) {
+      if (option?.id) map.set(option.id, option);
+    }
+    for (const value of [testsClaudeModel, discovererClaudeModel]) {
+      if (value && !map.has(value)) {
+        map.set(value, { id: value, name: value });
+      }
+    }
+    return Array.from(map.values());
+  }, [claudeModelOptions, testsClaudeModel, discovererClaudeModel]);
+
+  const effectiveOpencodeModelOptions = useMemo(() => {
+    const map = new Map<string, AgentModelOption>();
+    for (const option of opencodeModelOptions) {
+      if (option?.id) map.set(option.id, option);
+    }
+    for (const value of [testsOpencodeModel, discovererOpencodeModel]) {
+      if (value && !map.has(value)) {
+        map.set(value, { id: value, name: value });
+      }
+    }
+    return Array.from(map.values());
+  }, [opencodeModelOptions, testsOpencodeModel, discovererOpencodeModel]);
 
   return (
     <Section
@@ -604,7 +643,7 @@ function ModelsSection() {
             className="w-full px-3 py-2 rounded text-xs"
             style={{ ...INPUT, fontFamily: "monospace" }}
           >
-            {CLAUDE_CODE_MODELS.map((option) => (
+            {effectiveClaudeModelOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.name}</option>
             ))}
           </select>
@@ -620,7 +659,7 @@ function ModelsSection() {
             className="w-full px-3 py-2 rounded text-xs"
             style={{ ...INPUT, fontFamily: "monospace" }}
           >
-            {OPENCODE_MODELS.map((option) => (
+            {effectiveOpencodeModelOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.name}</option>
             ))}
           </select>
@@ -650,7 +689,7 @@ function ModelsSection() {
             className="w-full px-3 py-2 rounded text-xs"
             style={{ ...INPUT, fontFamily: "monospace" }}
           >
-            {CLAUDE_CODE_MODELS.map((option) => (
+            {effectiveClaudeModelOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.name}</option>
             ))}
           </select>
@@ -666,7 +705,7 @@ function ModelsSection() {
             className="w-full px-3 py-2 rounded text-xs"
             style={{ ...INPUT, fontFamily: "monospace" }}
           >
-            {OPENCODE_MODELS.map((option) => (
+            {effectiveOpencodeModelOptions.map((option) => (
               <option key={option.id} value={option.id}>{option.name}</option>
             ))}
           </select>
