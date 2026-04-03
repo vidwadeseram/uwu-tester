@@ -5,21 +5,14 @@ import { NextRequest } from "next/server";
 import { verifySessionToken } from "@/app/lib/auth-token";
 
 const SETTINGS_FILE = path.join(process.cwd(), "..", "settings.json");
-const ENV_FILE = path.join(process.cwd(), "..", "regression_tests", ".env");
+const ENV_FILE = path.join(process.cwd(), "..", ".env");
 
 export interface Settings {
   username: string;
   password_hash: string;
   session_token: string;
   models?: {
-    tests?: string;
-    tests_claude?: string;
-    tests_opencode?: string;
     openclaw?: string;
-    discoverer?: string;
-    discoverer_api?: string;
-    discoverer_claude?: string;
-    discoverer_opencode?: string;
   };
 }
 
@@ -52,8 +45,6 @@ export async function checkAuth(req: NextRequest): Promise<boolean> {
   const payload = await verifySessionToken(token);
   return !!payload && payload.username === settings.username;
 }
-
-// ── .env helpers ──────────────────────────────────────────────────────────────
 
 export function readEnvKeys(): Record<string, string> {
   const keys: Record<string, string> = {
