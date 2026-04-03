@@ -26,6 +26,7 @@ export const worktrees = sqliteTable("worktrees", {
   name: text("name").notNull(),
   path: text("path").notNull().unique(),
   branch: text("branch").notNull(),
+  port: integer("port"),
   isActive: integer("is_active", { mode: "boolean" }).default(true),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
@@ -179,6 +180,24 @@ export const scriptsRelations = relations(scripts, ({ one }) => ({
   }),
 }));
 
+export const portRegistry = sqliteTable("port_registry", {
+  id: text("id").primaryKey(),
+  worktreeId: text("worktree_id")
+    .notNull()
+    .references(() => worktrees.id, { onDelete: "cascade" }),
+  port: integer("port").notNull(),
+  isActive: integer("is_active", { mode: "boolean" }).default(true),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const portRegistryRelations = relations(portRegistry, ({ one }) => ({
+  worktree: one(worktrees, {
+    fields: [portRegistry.worktreeId],
+    references: [worktrees.id],
+  }),
+}));
+
 export type Project = typeof projects.$inferSelect;
 export type NewProject = typeof projects.$inferInsert;
 export type Worktree = typeof worktrees.$inferSelect;
@@ -199,3 +218,5 @@ export type TicketProviderConfig = typeof ticketProviderConfigs.$inferSelect;
 export type NewTicketProviderConfig = typeof ticketProviderConfigs.$inferInsert;
 export type Script = typeof scripts.$inferSelect;
 export type NewScript = typeof scripts.$inferInsert;
+export type PortRegistry = typeof portRegistry.$inferSelect;
+export type NewPortRegistry = typeof portRegistry.$inferInsert;
