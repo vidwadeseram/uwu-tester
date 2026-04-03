@@ -302,8 +302,62 @@ function compactWorkspaceContext(
   };
 }
 
-function deterministicSpec(sourceUrl: string): string {
+function toCoveragePath(raw: string, sourceUrl: string): string | null {
+  const input = (raw || "").trim();
+  if (!input) return null;
+
+  let pathname = "";
+  if (input.startsWith("http://") || input.startsWith("https://")) {
+    try {
+      const parsed = new URL(input);
+      const base = new URL(sourceUrl || "http://localhost:3000");
+      if (parsed.origin !== base.origin) return null;
+      pathname = parsed.pathname || "/";
+    } catch {
+      return null;
+    }
+  } else if (input.startsWith("/")) {
+    pathname = input;
+  } else {
+    return null;
+  }
+
+  const normalized = pathname.replace(/\/+/g, "/").replace(/\/$/, "") || "/";
+  const lowered = normalized.toLowerCase();
+  if (lowered.startsWith("/api/")) return null;
+  if (lowered === "/api") return null;
+  if (/(\.png|\.jpg|\.jpeg|\.gif|\.svg|\.webp|\.ico|\.css|\.js|\.map|\.woff|\.woff2|\.ttf|\.otf|\.json)$/i.test(lowered)) {
+    return null;
+  }
+  if (lowered.includes("logout") || lowered.includes("signout")) return null;
+  return normalized;
+}
+
+function buildCoverageRoutes(
+  sourceUrl: string,
+  context: ReturnType<typeof collectWorkspaceContext>,
+  web: FetchedWebContext,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: string) => {
+    const normalized = toCoveragePath(value, sourceUrl);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+
+  add("/");
+  for (const route of context.routeHints) add(route);
+  for (const link of web.links) add(link);
+  for (const authRoute of ["/login", "/signin", "/signup", "/forgot-password", "/verify", "/otp"]) add(authRoute);
+
+  return out.slice(0, 28);
+}
+
+function deterministicSpec(sourceUrl: string, coverageRoutes: string[]): string {
   const safeUrl = sourceUrl || "http://localhost:3000";
+  const plannedRoutesJson = JSON.stringify(coverageRoutes);
   return [
     "import { test, expect } from '@playwright/test';",
     "",
@@ -347,13 +401,14 @@ function deterministicSpec(sourceUrl: string): string {
     "  return url.includes('otp') || url.includes('verify') || body.includes('otp') || body.includes('verification');",
     "}",
     "",
-    "test('deterministic full end-to-end login journey', async ({ page }) => {",
+    "test('deterministic full end-to-end workspace journey', async ({ page }) => {",
     "  test.setTimeout(180_000);",
     "  const targetUrl = process.env.UWU_SPEC_TARGET_URL || '" + safeUrl + "';",
     "  const webPhone = process.env.WEB_PHONE || process.env.WEB_USERNAME || '';",
     "  const webPassword = process.env.WEB_PASSWORD || '';",
     "  const otp = process.env.UWU_SPEC_OTP || '';",
     "  const visited = [];",
+    "  const plannedRoutes = " + plannedRoutesJson + ";",
     "  let passed = false;",
     "  let summary = '';",
     "  let otpUsed = false;",
@@ -447,31 +502,28 @@ function deterministicSpec(sourceUrl: string): string {
     "        seen.add(full);",
     "        out.push(full);",
     "      }",
-    "      return out.slice(0, 8);",
+    "      return out.slice(0, 24);",
     "    });",
     "",
-    "    if (stillLogin) {",
-    "      const fallbackRoutes = ['/signup', '/signup-verification', '/resetpswd-verification', '/verify-email', '/sms-recharge-status'];",
-    "      let reachable = 0;",
-    "      for (const route of fallbackRoutes) {",
-    "        const full = new URL(route, targetUrl).toString();",
-    "        const r = await page.goto(full, { waitUntil: 'domcontentloaded', timeout: 30_000 });",
-    "        if (r && r.status() < 500) reachable += 1;",
-    "        visited.push(new URL(full).pathname || '/');",
-    "        await page.waitForTimeout(450);",
-    "      }",
-    "      if (reachable < 3) throw new Error(`Neither authenticated flow nor logged-out flow stabilized (reachable=${reachable})`);",
-    "    } else {",
-    "      for (const link of sameOriginLinks) {",
-    "        const r = await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 30_000 });",
-    "        if (r) expect(r.status()).toBeLessThan(500);",
-    "        visited.push(new URL(link).pathname || '/');",
-    "        await page.waitForTimeout(600);",
-    "      }",
+    "    const sameOriginPaths = sameOriginLinks.map((link) => {",
+    "      try { return new URL(link).pathname || '/'; } catch { return '/'; }",
+    "    });",
+    "    const routeQueue = Array.from(new Set([...(plannedRoutes || []), ...sameOriginPaths]));",
+    "    let reachable = 0;",
+    "    for (const route of routeQueue) {",
+    "      const full = new URL(route, targetUrl).toString();",
+    "      const r = await page.goto(full, { waitUntil: 'domcontentloaded', timeout: 30_000 });",
+    "      if (r && r.status() < 500) reachable += 1;",
+    "      visited.push(new URL(full).pathname || '/');",
+    "      await page.waitForTimeout(550);",
+    "    }",
+    "    const minExpectedReachable = Math.max(3, Math.min(10, Math.floor(routeQueue.length / 3)));",
+    "    if (reachable < minExpectedReachable) {",
+    "      throw new Error(`Route coverage too low (reachable=${reachable}, expected>=${minExpectedReachable}, mode=${authMode})`);",
     "    }",
     "",
     "    passed = true;",
-    "    summary = `Full E2E complete: mode=${authMode} otp_used=${otpUsed} visited=${visited.length}`;",
+    "    summary = `Full E2E complete: mode=${authMode} otp_used=${otpUsed} visited=${visited.length} planned=${plannedRoutes.length}`;",
     "  } catch (error) {",
     "    const text = error instanceof Error ? error.message : String(error);",
     "    summary = `Full E2E failed: ${text}`;",
@@ -484,15 +536,21 @@ function deterministicSpec(sourceUrl: string): string {
   ].join("\n");
 }
 
-function deterministicConfig(project: string, sourceUrl: string): DeterministicGeneration {
+function deterministicConfig(
+  project: string,
+  sourceUrl: string,
+  context: ReturnType<typeof collectWorkspaceContext>,
+  web: FetchedWebContext,
+): DeterministicGeneration {
+  const coverageRoutes = buildCoverageRoutes(sourceUrl, context, web);
   const testConfig: DiscovererTestConfig = {
     project,
-    description: `Deterministic full E2E Discoverer fallback for ${project}`,
+    description: `Deterministic full-site E2E Discoverer fallback for ${project}`,
     test_cases: [
       {
-        id: "web_login_e2e",
-        label: "Web login full E2E",
-        task: `Run full login + optional OTP + post-login navigation journey on ${sourceUrl || "the app"}`,
+        id: "web_full_site_e2e",
+        label: "Web full-site E2E",
+        task: `Run login + optional OTP + broad route traversal from workspace and URL hints on ${sourceUrl || "the app"}`,
         enabled: true,
         depends_on: null,
         skip_dependents_on_fail: true,
@@ -502,21 +560,22 @@ function deterministicConfig(project: string, sourceUrl: string): DeterministicG
       {
         id: "full",
         label: "Full",
-        description: "Run deterministic full end-to-end journey",
+        description: "Run deterministic full-site end-to-end journey",
         enabled: true,
-        case_ids: ["web_login_e2e"],
+        case_ids: ["web_full_site_e2e"],
       },
     ],
   };
 
   const agentDocs = [
     `# ${project} — Deterministic Fallback Docs`,
-    "This fallback generates a full end-to-end web journey locally without external models.",
-    "Journey: open target URL, perform login with WEB_PHONE/WEB_PASSWORD (or WEB_USERNAME), solve OTP via UWU_SPEC_OTP when challenged, verify non-login state, and navigate multiple internal pages.",
+    "This fallback generates a full-site end-to-end web journey locally without external models.",
+    "Journey: open target URL, perform login with WEB_PHONE/WEB_PASSWORD (or WEB_USERNAME), solve OTP via UWU_SPEC_OTP when challenged, then traverse route coverage derived from workspace route hints and discovered same-origin links.",
+    `Planned route coverage (${coverageRoutes.length}): ${coverageRoutes.join(", ")}`,
   ].join("\n\n");
 
   return {
-    spec: deterministicSpec(sourceUrl),
+    spec: deterministicSpec(sourceUrl, coverageRoutes),
     testConfig,
     agentDocs,
     specModel: "fallback/local",
@@ -1300,7 +1359,7 @@ export async function POST(req: NextRequest) {
     specModel = specGenerated.model;
   } catch (error) {
     const primaryMessage = error instanceof Error ? error.message : "Discoverer spec generation failed";
-    const deterministic = deterministicConfig(project, sourceUrl);
+    const deterministic = deterministicConfig(project, sourceUrl, context, fetchedWeb);
     generatedSpec = deterministic.spec;
     specModel = deterministic.specModel;
     generationWarning = generationWarning
@@ -1317,7 +1376,7 @@ export async function POST(req: NextRequest) {
     generationModel = generated.model;
   } catch (error) {
     const primaryMessage = error instanceof Error ? error.message : "Discoverer generation failed";
-    const deterministic = deterministicConfig(project, sourceUrl);
+    const deterministic = deterministicConfig(project, sourceUrl, context, fetchedWeb);
     generatedTestConfig = deterministic.testConfig;
     agentDocs = deterministic.agentDocs;
     generationModel = deterministic.generationModel;
