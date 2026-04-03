@@ -254,7 +254,7 @@ function buildCurlCommand(payload: string): string {
   const secret = process.env.AUTH_SECRET?.trim() ?? "";
   const headers = [`-H 'Content-Type: application/json'`];
   if (secret) headers.push(`-H ${shellQuote(`x-internal-secret: ${secret}`)}`);
-  return `curl -sS --fail-with-body -X POST http://127.0.0.1:${port}/api/discoverer ${headers.join(" ")} -d ${shellQuote(payload)}`;
+  return `curl -sS --fail-with-body --max-time 600 -X POST http://127.0.0.1:${port}/api/discoverer ${headers.join(" ")} -d ${shellQuote(payload)}`;
 }
 
 function buildRunnerCommand(target: DiscoverTarget, input: {
