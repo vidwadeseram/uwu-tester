@@ -7,7 +7,7 @@ set -euo pipefail
 # Config defaults (override via env vars)
 ###############################################################################
 REPO_URL="https://github.com/vidwadeseram/uwu-code.git"
-INSTALL_DIR="${INSTALL_DIR:-/opt/vps-dashboard}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/uwu-code}"
 DASHBOARD_PORT="${DASHBOARD_PORT:-3000}"
 TERMINAL_PORT="${TERMINAL_PORT:-7681}"
 NODE_VERSION="20"
@@ -336,85 +336,15 @@ SUDOEOF
 chmod 440 /etc/sudoers.d/uwu-agents
 
 # Give uwu write access to the dirs it needs
-# (regression_tests for running/reading tests; workspaces for project files)
-mkdir -p "$INSTALL_DIR/regression_tests/results"
 mkdir -p "$INSTALL_DIR/openclaw/data"
 chmod -R a+rX "$INSTALL_DIR"
-chmod -R a+w  "$INSTALL_DIR/regression_tests/results"
-chmod -R a+w  "$INSTALL_DIR/regression_tests/test_cases"
 chmod -R a+w  "$INSTALL_DIR/openclaw/data"
 chmod    a+rw "$INSTALL_DIR/settings.json" 2>/dev/null || true
 
 mkdir -p /home/uwu/.config/opencode
-cat > /home/uwu/.config/opencode/config.json << OPENCODEMCP
-{
-  "permission": "allow",
-  "mcp": {
-    "uwu-code": {
-      "type": "local",
-      "command": ["/usr/local/bin/uwu-mcp"],
-      "enabled": true
-    }
-  }
-}
-OPENCODEMCP
 chown -R uwu:uwu /home/uwu/.config
 
 success "'uwu' user configured."
-
-###############################################################################
-# uv (Python package manager for regression tests)
-###############################################################################
-if ! command -v uv &>/dev/null; then
-  info "Installing uv..."
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.cargo/bin:$PATH"
-  success "uv installed."
-else
-  success "uv $(uv --version 2>/dev/null | head -1) already installed."
-fi
-
-# Make uv accessible to non-root uwu user (uv symlinks to /root/.local/bin)
-# Copy the real binary so uwu can execute it, then create a wrapper
-if [ -f "$HOME/.local/bin/uv" ] && [ ! -f /usr/local/bin/uv.real ]; then
-  cp "$HOME/.local/bin/uv" /usr/local/bin/uv.real
-  chmod 755 /usr/local/bin/uv.real
-fi
-if [ ! -f /usr/local/bin/uv ]; then
-  ln -s /usr/local/bin/uv.real /usr/local/bin/uv 2>/dev/null || true
-fi
-
-# Wrapper script that lets uwu (or any user) run uv without sudo permission issues
-if [ ! -f /usr/local/bin/uv-uwu ]; then
-  cat > /usr/local/bin/uv-uwu << 'UVUWUSCRIPT'
-#!/bin/bash
-exec /usr/local/bin/uv.real "$@"
-UVUWUSCRIPT
-  chmod 755 /usr/local/bin/uv-uwu
-fi
-
-# uvx = uv tool run; newer browser-use calls uvx directly
-if [ ! -f /usr/local/bin/uvx ]; then
-  cat > /usr/local/bin/uvx << 'UVXSCRIPT'
-#!/bin/bash
-exec /usr/local/bin/uv tool run "$@"
-UVXSCRIPT
-  chmod 755 /usr/local/bin/uvx
-fi
-
-# uwu-mcp: fast wrapper for the MCP server (bypasses uv run startup overhead)
-# Claude Code uses this wrapper; it must run from the regression_tests dir so
-# pydantic_settings finds the .env there (not from /root which uwu can't access).
-cat > /usr/local/bin/uwu-mcp << UWUMCPSCRIPT
-#!/bin/bash
-cd $INSTALL_DIR/regression_tests
-exec $INSTALL_DIR/regression_tests/.venv/bin/python mcp_server.py
-UWUMCPSCRIPT
-chmod 755 /usr/local/bin/uwu-mcp
-
-# Register the MCP server in uwu's claude config (project: /home/uwu)
-# so 'cd /home/uwu && claude ...' can find it without extra setup.
-sudo -u uwu bash -c 'cd /home/uwu && claude mcp remove uwu-code 2>/dev/null; claude mcp add uwu-code -- /usr/local/bin/uwu-mcp' || true
 
 ###############################################################################
 # Clone / update repo
@@ -431,38 +361,6 @@ else
   git clone "$REPO_URL" "$INSTALL_DIR" -q
 fi
 success "Repo ready."
-
-###############################################################################
-# Install browser-use dependencies
-###############################################################################
-info "Installing browser-use regression test dependencies..."
-cd "$INSTALL_DIR/regression_tests"
-uv sync 2>/dev/null || uv pip install browser-use langchain-anthropic 2>/dev/null || true
-
-# Install Playwright browsers
-uv run playwright install chromium 2>/dev/null || true
-success "browser-use ready."
-
-###############################################################################
-# Write .env for regression tests
-###############################################################################
-ENV_FILE="$INSTALL_DIR/regression_tests/.env"
-touch "$ENV_FILE"
-
-set_env() {
-  local key="$1" val="$2" file="$3"
-  if grep -q "^${key}=" "$file" 2>/dev/null; then
-    sed -i "s|^${key}=.*|${key}=\"${val}\"|" "$file"
-  else
-    echo "${key}=\"${val}\"" >> "$file"
-  fi
-}
-
-[ -n "$OPENROUTER_API_KEY" ] && set_env "OPENROUTER_API_KEY" "$OPENROUTER_API_KEY" "$ENV_FILE"
-[ -n "$ANTHROPIC_API_KEY" ]  && set_env "ANTHROPIC_API_KEY"  "$ANTHROPIC_API_KEY"  "$ENV_FILE"
-[ -n "$OPENAI_API_KEY" ]     && set_env "OPENAI_API_KEY"     "$OPENAI_API_KEY"     "$ENV_FILE"
-
-success "Regression test environment configured."
 
 ###############################################################################
 # Dashboard build
@@ -499,9 +397,9 @@ if [ ! -s "$AUTH_SECRET_FILE" ]; then
 fi
 AUTH_SECRET=$(cat "$AUTH_SECRET_FILE")
 
-cat > /etc/systemd/system/vps-dashboard.service << EOF
+cat > /etc/systemd/system/uwu-code.service << EOF
 [Unit]
-Description=uwu-code
+Description=uwu-code Dashboard
 After=network.target
 
 [Service]
@@ -521,7 +419,7 @@ EOF
 
 mkdir -p /opt/workspaces
 TTYD_BIN="$(command -v ttyd || echo /usr/bin/ttyd)"
-cat > /etc/systemd/system/vps-ttyd.service << EOF
+cat > /etc/systemd/system/uwu-code-ttyd.service << EOF
 [Unit]
 Description=uwu-code Browser Terminal (ttyd)
 After=network.target
@@ -548,22 +446,17 @@ uv sync 2>/dev/null || uv pip install anthropic openai 2>/dev/null || true
 
 chown -R uwu:uwu "$INSTALL_DIR/openclaw" 2>/dev/null || true
 
-# uwu runs test_runner.py and the agent creates files (manual_runner.py etc.)
-# in regression_tests — own the entire directory, not just .venv
-chown -R uwu:uwu "$INSTALL_DIR/regression_tests" 2>/dev/null || true
-
-cat > /etc/systemd/system/vps-openclaw.service << EOF
+cat > /etc/systemd/system/uwu-code-openclaw.service << EOF
 [Unit]
 Description=openclaw autonomous task agent
-After=network.target vps-dashboard.service
+After=network.target uwu-code.service
 
 [Service]
 Type=simple
 User=uwu
 WorkingDirectory=$INSTALL_DIR/openclaw
 Environment=HOME=/home/uwu
-EnvironmentFile=-$INSTALL_DIR/regression_tests/.env
-ExecStart=/usr/local/bin/uv-uwu run agent.py
+ExecStart=/usr/local/bin/python3 agent.py
 Restart=on-failure
 RestartSec=10
 
@@ -572,8 +465,8 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable vps-dashboard vps-ttyd vps-openclaw
-systemctl restart vps-dashboard vps-ttyd vps-openclaw
+systemctl enable uwu-code uwu-code-ttyd uwu-code-openclaw
+systemctl restart uwu-code uwu-code-ttyd uwu-code-openclaw
 success "Services started."
 
 ###############################################################################
@@ -583,7 +476,7 @@ info "Configuring nginx..."
 PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || curl -s --max-time 5 icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
 
 if [ -n "$DOMAIN_NAME" ]; then
-  cat > /etc/nginx/sites-available/vps-dashboard << EOF
+  cat > /etc/nginx/sites-available/uwu-code << EOF
 server {
     listen 80;
     server_name ${DOMAIN_NAME};
@@ -627,7 +520,7 @@ server {
 }
 EOF
 
-  ln -sf /etc/nginx/sites-available/vps-dashboard /etc/nginx/sites-enabled/vps-dashboard
+  ln -sf /etc/nginx/sites-available/uwu-code /etc/nginx/sites-enabled/uwu-code
   rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
   nginx -t && systemctl enable nginx && systemctl restart nginx
 
@@ -641,7 +534,7 @@ EOF
   TERMINAL_URL="https://${DOMAIN_NAME}/terminal/"
 
 else
-  cat > /etc/nginx/sites-available/vps-dashboard << EOF
+  cat > /etc/nginx/sites-available/uwu-code << EOF
 server {
     listen 80;
     server_name _;
@@ -683,7 +576,7 @@ server {
     }
 }
 EOF
-  ln -sf /etc/nginx/sites-available/vps-dashboard /etc/nginx/sites-enabled/vps-dashboard
+  ln -sf /etc/nginx/sites-available/uwu-code /etc/nginx/sites-enabled/uwu-code
   rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
   nginx -t && systemctl enable nginx && systemctl restart nginx
   DASHBOARD_URL="http://${PUBLIC_IP}"
@@ -701,14 +594,13 @@ echo -e "${GREEN}║          uwu-code — Installation Complete            ║$
 echo -e "${GREEN}╚══════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  Dashboard:  ${CYAN}${DASHBOARD_URL}${NC}"
-echo -e "  Terminal:   ${CYAN}${TERMINAL_URL}${NC}"
-echo -e "  Tests:      ${CYAN}${DASHBOARD_URL}/tests${NC}"
-echo -e "  Scheduler:  ${CYAN}${DASHBOARD_URL}/scheduler${NC}"
+  echo -e "  Terminal:   ${CYAN}${TERMINAL_URL}${NC}"
+  echo -e "  Scheduler:  ${CYAN}${DASHBOARD_URL}/scheduler${NC}"
 echo -e "  OpenClaw:   ${CYAN}${DASHBOARD_URL}/openclaw${NC}"
 echo ""
 echo -e "  Manage:"
-echo -e "    ${YELLOW}systemctl status vps-dashboard vps-openclaw${NC}"
+echo -e "    ${YELLOW}systemctl status uwu-code uwu-code-openclaw${NC}"
 echo ""
 echo -e "  Update:"
-echo -e "    ${YELLOW}cd $INSTALL_DIR && git pull && cd dashboard && npm ci && npm run build && systemctl restart vps-dashboard${NC}"
+echo -e "    ${YELLOW}cd $INSTALL_DIR && git pull && cd dashboard && npm ci && npm run build && systemctl restart uwu-code${NC}"
 echo ""

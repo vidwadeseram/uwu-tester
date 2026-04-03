@@ -18,7 +18,7 @@ async function runCommand(cmd: string): Promise<string> {
 export async function GET() {
   try {
     // Check systemctl status for each service
-    const serviceNames = ["vps-dashboard", "vps-ttyd", "nginx", "docker"];
+    const serviceNames = ["uwu-code", "uwu-code-ttyd", "nginx", "docker"];
 
     const serviceStatuses = await Promise.all(
       serviceNames.map(async (name) => {
