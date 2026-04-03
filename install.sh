@@ -439,8 +439,7 @@ info "Installing browser-use regression test dependencies..."
 cd "$INSTALL_DIR/regression_tests"
 uv sync 2>/dev/null || uv pip install browser-use langchain-anthropic 2>/dev/null || true
 
-# Install Playwright browsers
-uv run playwright install chromium 2>/dev/null || true
+uv run playwright install --with-deps chromium 2>/dev/null || uv run playwright install chromium 2>/dev/null || true
 success "browser-use ready."
 
 ###############################################################################
@@ -470,6 +469,8 @@ success "Regression test environment configured."
 info "Installing dashboard dependencies..."
 cd "$INSTALL_DIR/dashboard"
 npm ci --prefer-offline --loglevel=error 2>/dev/null || npm install --loglevel=error
+
+npx playwright install --with-deps chromium 2>/dev/null || npx playwright install chromium 2>/dev/null || true
 info "Building dashboard..."
 npm run build >/dev/null 2>&1
 success "Dashboard built."
@@ -710,5 +711,5 @@ echo -e "  Manage:"
 echo -e "    ${YELLOW}systemctl status vps-dashboard vps-openclaw${NC}"
 echo ""
 echo -e "  Update:"
-echo -e "    ${YELLOW}cd $INSTALL_DIR && git pull && cd dashboard && npm ci && npm run build && systemctl restart vps-dashboard${NC}"
+echo -e "    ${YELLOW}cd $INSTALL_DIR && git pull && cd dashboard && npm ci && npx playwright install --with-deps chromium && npm run build && systemctl restart vps-dashboard${NC}"
 echo ""
