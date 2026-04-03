@@ -13,11 +13,13 @@
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "better-sqlite3": "^12.8.0",
     "drizzle-orm": "^0.45.2",
     "next": "14.2.5",
+    "next-themes": "^0.4.6",
     "react": "^18",
     "react-dom": "^18",
     "xterm": "^5.3.0"
