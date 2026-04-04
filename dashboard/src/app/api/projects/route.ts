@@ -129,42 +129,66 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Try cloning without authentication first (works for public repos)
       try {
-        const token = getGitToken();
-        const cloneUrl = injectTokenIntoUrl(gitUrl, token);
-        console.error("[/api/projects POST] Attempting clone with URL:", gitUrl);
-        console.error("[/api/projects POST] Token configured:", !!token);
-        execFileSync("git", ["clone", "--depth=1", cloneUrl, finalPath], {
+        console.error("[/api/projects POST] Attempting clone (no auth):", gitUrl);
+        execFileSync("git", ["clone", "--depth=1", gitUrl, finalPath], {
           encoding: "utf-8",
           timeout: 60000,
-          env: getGitEnv(),
+          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
         });
         cloneMessage = `Cloned from ${gitUrl}`;
-      } catch (error: unknown) {
-        console.error("[/api/projects POST] Clone failed for:", gitUrl);
-        console.error("[/api/projects POST] Error:", error);
-        
-        const errorMessage = error instanceof Error 
-          ? error.message 
-          : String(error);
-        
-        let userMessage = "Failed to clone repository";
-        if (errorMessage.includes("Authentication failed") || errorMessage.includes("401") || errorMessage.includes("403")) {
-          userMessage = "Authentication failed. Check your GitHub token in Settings.";
-        } else if (errorMessage.includes("Repository not found") || errorMessage.includes("404")) {
-          userMessage = "Repository not found. Check the URL and your access permissions.";
-        } else if (errorMessage.includes("Could not resolve host") || errorMessage.includes("network")) {
-          userMessage = "Network error. Check your internet connection.";
-        } else if (errorMessage.includes("already exists")) {
-          userMessage = `Directory already exists: ${finalPath}`;
-        } else if (errorMessage.includes("timeout")) {
-          userMessage = "Clone timed out. Try again or check network connection.";
+      } catch (noAuthError: unknown) {
+        // If no-auth fails and we have a token, try with authentication
+        const token = getGitToken();
+        if (!token) {
+          const errorMsg = noAuthError instanceof Error ? noAuthError.message : String(noAuthError);
+          console.error("[/api/projects POST] Clone failed (no auth, no token):", errorMsg);
+          let userMessage = "Failed to clone repository";
+          if (errorMsg.includes("Repository not found") || errorMsg.includes("404")) {
+            userMessage = "Repository not found. Check the URL andaccess permissions.";
+          } else if (errorMsg.includes("Could not resolve host") || errorMsg.includes("network")) {
+            userMessage = "Network error. Check your internet connection.";
+          } else if (errorMsg.includes("already exists")) {
+            userMessage = `Directory already exists: ${finalPath}`;
+          } else if (errorMsg.includes("timeout")) {
+            userMessage = "Clone timed out. Try again or check network connection.";
+          } else if (errorMsg.includes("Authentication") || errorMsg.includes("401") || errorMsg.includes("403")) {
+            userMessage = "Authentication required. Add a GitHub token in Settings for private repositories.";
+          }
+          return NextResponse.json({ success: false, message: userMessage }, { status: 500 });
         }
-        
-        return NextResponse.json(
-          { success: false, message: userMessage },
-          { status: 500 }
-        );
+
+        console.error("[/api/projects POST] Clone failed without auth, trying with token...");
+        try {
+          const cloneUrl = injectTokenIntoUrl(gitUrl, token);
+          console.error("[/api/projects POST] Attempting clone (with auth):", gitUrl);
+          execFileSync("git", ["clone", "--depth=1", cloneUrl, finalPath], {
+            encoding: "utf-8",
+            timeout: 60000,
+            env: getGitEnv(),
+          });
+          cloneMessage = `Cloned from ${gitUrl} (authenticated)`;
+        } catch (authError: unknown) {
+          console.error("[/api/projects POST] Clone failed (with auth):", gitUrl);
+          console.error("[/api/projects POST] Auth Error:", authError);
+          
+          const errorMsg = authError instanceof Error ? authError.message : String(authError);
+          let userMessage = "Failed to clone repository";
+          if (errorMsg.includes("Authentication failed") || errorMsg.includes("401") || errorMsg.includes("403")) {
+            userMessage = "Authentication failed. Your GitHub token may be invalid or expired. Generate a new token at github.com/settings/tokens";
+          } else if (errorMsg.includes("Repository not found") || errorMsg.includes("404")) {
+            userMessage = "Repository not found. Check the URL and your access permissions.";
+          } else if (errorMsg.includes("Could not resolve host") || errorMsg.includes("network")) {
+            userMessage = "Network error. Check your internet connection.";
+          } else if (errorMsg.includes("already exists")) {
+            userMessage = `Directory already exists: ${finalPath}`;
+          } else if (errorMsg.includes("timeout")) {
+            userMessage = "Clone timed out. Try again or check network connection.";
+          }
+          
+          return NextResponse.json({ success: false, message: userMessage }, { status: 500 });
+        }
       }
     } else {
       fs.mkdirSync(finalPath, { recursive: true });
