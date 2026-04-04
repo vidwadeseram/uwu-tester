@@ -36,14 +36,27 @@
   margin: 0;
 }
 
-html,
+html {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 body {
+  font-family: inherit;
   background-color: var(--bg);
   color: var(--text);
-  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
   min-height: 100vh;
   scroll-behavior: smooth;
   overflow-x: hidden;
+}
+
+input, textarea, select, button {
+  font-family: inherit;
+}
+
+code, pre, tt, kbd, samp {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, monospace;
 }
 
 /* Custom scrollbar */

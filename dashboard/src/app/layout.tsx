@@ -15,7 +15,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="bg-grid min-h-screen" style={{ background: "var(--bg)" }}>
+      <body className="bg-grid min-h-screen font-mono" style={{ background: "var(--bg)" }}>
         <ThemeProvider>
           <AppLayout>{children}</AppLayout>
         </ThemeProvider>
