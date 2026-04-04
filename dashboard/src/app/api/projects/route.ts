@@ -137,9 +137,29 @@ export async function POST(req: NextRequest) {
           timeout: 60000,
         });
         cloneMessage = `Cloned from ${gitUrl}`;
-      } catch (error) {
+      } catch (error: unknown) {
+        console.error("[/api/projects POST] Clone failed for:", gitUrl);
+        console.error("[/api/projects POST] Error:", error);
+        
+        const errorMessage = error instanceof Error 
+          ? error.message 
+          : String(error);
+        
+        let userMessage = "Failed to clone repository";
+        if (errorMessage.includes("Authentication failed") || errorMessage.includes("401") || errorMessage.includes("403")) {
+          userMessage = "Authentication failed. Check your GitHub token in Settings.";
+        } else if (errorMessage.includes("Repository not found") || errorMessage.includes("404")) {
+          userMessage = "Repository not found. Check the URL and your access permissions.";
+        } else if (errorMessage.includes("Could not resolve host") || errorMessage.includes("network")) {
+          userMessage = "Network error. Check your internet connection.";
+        } else if (errorMessage.includes("already exists")) {
+          userMessage = `Directory already exists: ${finalPath}`;
+        } else if (errorMessage.includes("timeout")) {
+          userMessage = "Clone timed out. Try again or check network connection.";
+        }
+        
         return NextResponse.json(
-          { success: false, message: "Failed to clone repository" },
+          { success: false, message: userMessage },
           { status: 500 }
         );
       }
