@@ -378,7 +378,9 @@ else
   success "Bun $(bun --version) already installed."
 fi
 
-bun install --frozen-lockfile >/dev/null 2>&1 || bun install >/dev/null 2>&1
+if ! bun install --frozen-lockfile; then
+  error "Failed to install dashboard dependencies with --frozen-lockfile. Please fix the Bun version or update and commit the lockfile before retrying."
+fi
 info "Building dashboard..."
 bun run build >/dev/null 2>&1
 success "Dashboard built."
