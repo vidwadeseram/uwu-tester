@@ -89,6 +89,7 @@ export interface ProjectGroup {
 
 export interface ProjectsData {
   groups: ProjectGroup[];
+  projects: ProjectInfo[];
 }
 
 /**

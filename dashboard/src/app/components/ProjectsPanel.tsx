@@ -214,8 +214,7 @@ export default function ProjectsPanel({ data, onRefresh }: Props) {
     }
   };
 
-  const totalProjects =
-    data?.groups.reduce((sum, g) => sum + g.projects.length, 0) ?? 0;
+  const totalProjects = data?.projects?.length ?? 0;
 
   return (
     <div className="flex flex-col gap-4">
@@ -342,7 +341,7 @@ export default function ProjectsPanel({ data, onRefresh }: Props) {
                 </div>
               ))}
             </div>
-          ) : data.groups.length === 0 ? (
+          ) : (data.projects?.length ?? 0) === 0 ? (
             <div
               className="card flex flex-col items-center justify-center py-12 gap-3"
               style={{ color: "#4a5568" }}
@@ -351,108 +350,24 @@ export default function ProjectsPanel({ data, onRefresh }: Props) {
                 <title>No projects</title>
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               </svg>
-              <div className="text-sm">No projects found in /opt/workspaces</div>
+              <div className="text-sm">No projects found</div>
               <div className="text-xs" style={{ color: "#2e4a7a" }}>
-                Use &ldquo;Clone Repo&rdquo; above to add a project
+                Use &ldquo;Clone Project&rdquo; above to add a project
               </div>
             </div>
           ) : (
-            <div className="space-y-4">
-              {data.groups.map((group) => (
-                <GroupSection
-                  key={group.name}
-                  group={group}
-                  deletingPath={deletingPath}
-                  onDeleteProject={handleDeleteProject}
+            <div className="space-y-2">
+              {data.projects.map((proj) => (
+                <ProjectRow
+                  key={proj.path}
+                  project={proj}
+                  deleting={deletingPath === proj.path}
+                  onDelete={() => handleDeleteProject(proj.path, proj.name)}
                 />
               ))}
             </div>
           )}
         </>
-      )}
-    </div>
-  );
-}
-
-function GroupSection({
-  group,
-  deletingPath,
-  onDeleteProject,
-}: {
-  group: { name: string; path: string; projects: { name: string; path: string; lastModified: string; branch: string; remoteUrl: string }[] };
-  deletingPath: string | null;
-  onDeleteProject: (projectPath: string, projectName: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-
-  return (
-    <div className="card overflow-hidden">
-      {/* Group header */}
-      <button
-        type="button"
-        className="w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-white/5"
-        onClick={() => setExpanded((v) => !v)}
-      >
-        <div className="flex items-center gap-2">
-          <svg
-            className="w-3.5 h-3.5 flex-shrink-0 transition-transform"
-            style={{
-              color: "#4a5568",
-              transform: expanded ? "rotate(90deg)" : "rotate(0deg)",
-            }}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <title>Toggle group</title>
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-          <svg
-            className="w-4 h-4 flex-shrink-0"
-            style={{ color: "#ffd700" }}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <title>Project group</title>
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
-          <span className="font-semibold text-sm" style={{ color: "#e2e8f0" }}>
-            {group.name}
-          </span>
-          <span
-            className="badge"
-            style={{
-              background: "rgba(255, 215, 0, 0.08)",
-              color: "#ffd700",
-              border: "1px solid rgba(255, 215, 0, 0.2)",
-            }}
-          >
-            {group.projects.length}
-          </span>
-        </div>
-          <span className="text-xs font-mono hidden md:inline" style={{ color: "#2e4a7a" }}>
-            {group.path}
-          </span>
-      </button>
-
-      {expanded && (
-        <div className="px-3 pb-3 space-y-2">
-          {group.projects.map((proj) => (
-            <ProjectRow
-              key={proj.path}
-              project={proj}
-              deleting={deletingPath === proj.path}
-              onDelete={() => onDeleteProject(proj.path, proj.name)}
-            />
-          ))}
-        </div>
       )}
     </div>
   );
