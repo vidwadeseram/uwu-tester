@@ -37,6 +37,16 @@ interface Project {
   path: string;
 }
 
+const STATUS_CONFIG: Record<string, { color: string; bg: string; label: string }> = {
+  modified: { color: "var(--yellow)", bg: "rgba(255,215,0,0.1)", label: "M" },
+  added: { color: "var(--green)", bg: "rgba(0,255,136,0.1)", label: "A" },
+  deleted: { color: "var(--red)", bg: "rgba(255,68,68,0.1)", label: "D" },
+  untracked: { color: "var(--dim)", bg: "rgba(148,163,184,0.1)", label: "?" },
+  renamed: { color: "var(--cyan)", bg: "rgba(0,212,255,0.1)", label: "R" },
+  copied: { color: "var(--cyan)", bg: "rgba(0,212,255,0.1)", label: "C" },
+  unmerged: { color: "var(--yellow)", bg: "rgba(255,215,0,0.1)", label: "U" },
+};
+
 export default function GitPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
@@ -51,7 +61,6 @@ export default function GitPage() {
   const [newBranchName, setNewBranchName] = useState("");
   const [showNewBranch, setShowNewBranch] = useState(false);
 
-  // Load projects on mount
   useEffect(() => {
     fetch("/api/projects")
       .then((res) => res.json())
@@ -124,6 +133,7 @@ export default function GitPage() {
       if (res.ok) {
         await loadStatus();
         setSuccess("Files staged");
+        setTimeout(() => setSuccess(null), 2000);
       }
     } catch (err) {
       console.error(err);
@@ -144,6 +154,7 @@ export default function GitPage() {
       if (res.ok) {
         await loadStatus();
         setSuccess("Files unstaged");
+        setTimeout(() => setSuccess(null), 2000);
       }
     } catch (err) {
       console.error(err);
@@ -168,6 +179,7 @@ export default function GitPage() {
         setCommitMessage("");
         await loadStatus();
         await loadLogs();
+        setTimeout(() => setSuccess(null), 2000);
       } else {
         setError(data.error || "Failed to commit");
       }
@@ -192,6 +204,7 @@ export default function GitPage() {
       if (res.ok) {
         setSuccess("Pushed successfully");
         await loadStatus();
+        setTimeout(() => setSuccess(null), 2000);
       } else {
         const data = await res.json();
         setError(data.error || "Failed to push");
@@ -218,6 +231,7 @@ export default function GitPage() {
         setSuccess("Pulled successfully");
         await loadStatus();
         await loadLogs();
+        setTimeout(() => setSuccess(null), 2000);
       } else {
         const data = await res.json();
         setError(data.error || "Failed to pull");
@@ -244,6 +258,7 @@ export default function GitPage() {
         setNewBranchName("");
         setShowNewBranch(false);
         await loadBranches();
+        setTimeout(() => setSuccess(null), 2000);
       }
     } catch (err) {
       console.error(err);
@@ -260,7 +275,35 @@ export default function GitPage() {
         method: "DELETE",
       });
       await loadBranches();
+      setSuccess(`Branch ${name} deleted`);
+      setTimeout(() => setSuccess(null), 2000);
     } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCheckout = async (name: string) => {
+    if (!selectedProjectId || !name) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/git/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: selectedProjectId, branch: name }),
+      });
+      if (res.ok) {
+        setSuccess(`Switched to ${name}`);
+        await loadStatus();
+        await loadBranches();
+        setTimeout(() => setSuccess(null), 2000);
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to checkout");
+      }
+    } catch (err) {
+      setError("Failed to checkout");
       console.error(err);
     } finally {
       setLoading(false);
@@ -270,290 +313,440 @@ export default function GitPage() {
   const stagedFiles = status?.files.filter((f) => f.staged) || [];
   const unstagedFiles = status?.files.filter((f) => !f.staged) || [];
 
-  const statusColors: Record<string, string> = {
-    modified: "var(--yellow)",
-    added: "var(--green)",
-    deleted: "var(--red)",
-    untracked: "var(--dim)",
-    renamed: "var(--cyan)",
-    copied: "var(--cyan)",
-    unmerged: "var(--yellow)",
-    unknown: "var(--dim)",
-  };
-
   const showNoProjects = projects.length === 0 && selectedProjectId === "";
-
-  // Active tab indicator style helper
-  const tabActiveStyle = (isActive: boolean) =>
-    isActive ? { background: "rgba(30,45,74,0.5)" } : {};
 
   return (
     <div className="h-screen flex flex-col" style={{ background: "var(--bg)", color: "var(--text)" }}>
       {showNoProjects ? (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1 }}>
-          <p>No projects found. Add a project from the Dashboard.</p>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center p-8">
+            <div className="mb-4" style={{ fontSize: "3rem", filter: "grayscale(0.5)" }}>📂</div>
+            <h2 className="text-lg font-medium mb-2" style={{ color: "var(--text)" }}>No Projects</h2>
+            <p style={{ color: "var(--dim)" }}>Clone or add a project from the Dashboard to get started.</p>
+          </div>
         </div>
       ) : (
         <>
+          {/* Header */}
           <div
-            className="flex items-center gap-4 px-4 py-3"
+            className="flex items-center justify-between px-5 py-3"
             style={{ background: "var(--card)", borderBottom: "1px solid var(--border)" }}
           >
-            <h1 className="text-lg font-semibold" style={{ color: "var(--text)" }}>Git</h1>
-            <select
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
-              className="px-3 py-1.5 rounded text-sm"
-              style={{ background: "rgba(30,45,74,0.5)", border: "1px solid var(--border)", color: "var(--text)" }}
-            >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={loadStatus}
-              className="px-3 py-1.5 rounded text-sm"
-              style={{ background: "rgba(30,45,74,0.5)", border: "1px solid var(--border)", color: "var(--text)" }}
-            >
-              Refresh
-            </button>
-            <button
-              type="button"
-              onClick={handlePull}
-              disabled={loading}
-              className="px-3 py-1.5 rounded text-sm"
-              style={{ background: "rgba(0, 120, 255, 0.25)", border: "1px solid var(--border)", color: "var(--text)" }}
-            >
-              Pull
-            </button>
-            <button
-              type="button"
-              onClick={handlePush}
-              disabled={loading}
-              className="px-3 py-1.5 rounded text-sm"
-              style={{ background: "rgba(0, 255, 136, 0.25)", border: "1px solid var(--border)", color: "var(--text)" }}
-            >
-              Push
-            </button>
-          </div>
-
-          {error && (
-            <div className="px-4 py-2" style={{ background: "rgba(255,0,0,0.25)", color: "var(--text)" }}>
-              {error}
+            <div className="flex items-center gap-4">
+              <h1 className="text-base font-semibold" style={{ color: "var(--text)" }}>Git</h1>
+              <select
+                value={selectedProjectId}
+                onChange={(e) => setSelectedProjectId(e.target.value)}
+                className="px-3 py-1.5 rounded text-sm font-mono"
+                style={{
+                  background: "rgba(30,45,74,0.5)",
+                  border: "1px solid var(--border)",
+                  color: "var(--text)",
+                  minWidth: "140px",
+                }}
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </div>
-          )}
-          {success && (
-            <div className="px-4 py-2" style={{ background: "rgba(0, 128, 0, 0.25)", color: "var(--text)" }}>
-              {success}
+            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setSuccess(null)}
-                className="ml-2 underline"
-                style={{ textDecoration: "underline", color: "var(--text)" }}
+                onClick={loadStatus}
+                disabled={loading}
+                className="px-3 py-1.5 rounded text-xs font-medium transition-opacity"
+                style={{ background: "rgba(30,45,74,0.5)", border: "1px solid var(--border)", color: "var(--dim)" }}
               >
+                Refresh
+              </button>
+              <button
+                type="button"
+                onClick={handlePull}
+                disabled={loading}
+                className="px-4 py-1.5 rounded text-xs font-medium"
+                style={{ background: "rgba(0,180,255,0.15)", border: "1px solid rgba(0,180,255,0.3)", color: "#00b4ff" }}
+              >
+                ↓ Pull
+              </button>
+              <button
+                type="button"
+                onClick={handlePush}
+                disabled={loading}
+                className="px-4 py-1.5 rounded text-xs font-medium"
+                style={{ background: "rgba(0,255,136,0.15)", border: "1px solid rgba(0,255,136,0.3)", color: "var(--green)" }}
+              >
+                ↑ Push
+              </button>
+            </div>
+          </div>
+
+          {/* Status bar */}
+          {error && (
+            <div
+              className="px-4 py-2 text-sm flex items-center justify-between"
+              style={{ background: "rgba(255,68,68,0.15)", borderBottom: "1px solid rgba(255,68,68,0.3)" }}
+            >
+              <span style={{ color: "var(--red)" }}>{error}</span>
+              <button type="button" onClick={() => setError(null)} className="text-xs opacity-60 hover:opacity-100" style={{ color: "var(--red)" }}>
                 Dismiss
               </button>
             </div>
           )}
+          {success && (
+            <div
+              className="px-4 py-2 text-sm flex items-center justify-between"
+              style={{ background: "rgba(0,255,136,0.15)", borderBottom: "1px solid rgba(0,255,136,0.3)" }}
+            >
+              <span style={{ color: "var(--green)" }}>{success}</span>
+            </div>
+          )}
 
-          <div className="flex border-b" style={{ borderBottom: "1px solid var(--border)" }}>
+          {/* Branch info */}
+          {status && (
+            <div
+              className="flex items-center gap-6 px-5 py-2.5 text-sm"
+              style={{ background: "rgba(30,45,74,0.3)", borderBottom: "1px solid var(--border)" }}
+            >
+              <div className="flex items-center gap-2">
+                <span style={{ color: "var(--dim)" }}>Branch</span>
+                <span className="font-mono px-2 py-0.5 rounded" style={{ background: "rgba(0,212,255,0.1)", color: "var(--cyan)" }}>
+                  {status.current || "detached"}
+                </span>
+              </div>
+              {status.tracking && (
+                <div className="flex items-center gap-2">
+                  <span style={{ color: "var(--dim)" }}>→</span>
+                  <span className="font-mono text-xs" style={{ color: "var(--dim)" }}>{status.tracking}</span>
+                </div>
+              )}
+              {status.ahead > 0 && (
+                <span className="px-2 py-0.5 rounded text-xs font-mono" style={{ background: "rgba(255,215,0,0.1)", color: "var(--yellow)" }}>
+                  ↑{status.ahead}
+                </span>
+              )}
+              {status.behind > 0 && (
+                <span className="px-2 py-0.5 rounded text-xs font-mono" style={{ background: "rgba(148,163,184,0.1)", color: "var(--dim)" }}>
+                  ↓{status.behind}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div
+            className="flex border-b"
+            style={{ borderBottom: "1px solid var(--border)", background: "var(--card)" }}
+          >
             <button
               type="button"
               onClick={() => setActiveTab("status")}
-              className="px-4 py-2"
-              style={tabActiveStyle(activeTab === "status")}
+              className="px-5 py-2.5 text-sm font-medium transition-colors"
+              style={{
+                color: activeTab === "status" ? "var(--cyan)" : "var(--dim)",
+                borderBottom: activeTab === "status" ? "2px solid var(--cyan)" : "2px solid transparent",
+                marginBottom: "-1px",
+              }}
             >
               Status
+              {status && status.files.length > 0 && (
+                <span
+                  className="ml-2 px-1.5 py-0.5 rounded text-xs"
+                  style={{ background: "rgba(255,215,0,0.2)", color: "var(--yellow)" }}
+                >
+                  {status.files.length}
+                </span>
+              )}
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("branches")}
-              className="px-4 py-2"
-              style={tabActiveStyle(activeTab === "branches")}
+              className="px-5 py-2.5 text-sm font-medium transition-colors"
+              style={{
+                color: activeTab === "branches" ? "var(--cyan)" : "var(--dim)",
+                borderBottom: activeTab === "branches" ? "2px solid var(--cyan)" : "2px solid transparent",
+                marginBottom: "-1px",
+              }}
             >
               Branches
+              <span
+                className="ml-2 px-1.5 py-0.5 rounded text-xs"
+                style={{ background: "rgba(30,45,74,0.5)", color: "var(--dim)" }}
+              >
+                {branches.length}
+              </span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("log")}
-              className="px-4 py-2"
-              style={tabActiveStyle(activeTab === "log")}
+              className="px-5 py-2.5 text-sm font-medium transition-colors"
+              style={{
+                color: activeTab === "log" ? "var(--cyan)" : "var(--dim)",
+                borderBottom: activeTab === "log" ? "2px solid var(--cyan)" : "2px solid transparent",
+                marginBottom: "-1px",
+              }}
             >
               Log
             </button>
           </div>
 
-          <div className="flex-1 overflow-auto p-4">
+          {/* Content */}
+          <div className="flex-1 overflow-auto">
             {activeTab === "status" && status && (
-              <div className="space-y-4" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                <div className="rounded p-3" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-            <div className="flex items-center gap-4" style={{ display: "flex", alignItems: "center" }}>
-                    <span style={{ color: "var(--dim)" }}>Branch:</span>
-                    <span className="font-mono" style={{ color: "var(--text)" }}>{status.current}</span>
-                    {status.tracking && (
-                      <>
-                        <span style={{ color: "var(--dim)" }}>→</span>
-                        <span className="font-mono" style={{ color: "var(--cyan)" }}>{status.tracking}</span>
-                      </>
-                    )}
-                    {status.ahead > 0 && <span style={{ color: "var(--yellow)" }}>↑{status.ahead}</span>}
-                    {status.behind > 0 && <span style={{ color: "var(--dim)" }}>↓{status.behind}</span>}
-                  </div>
-                </div>
-
+              <div className="p-4 space-y-4">
+                {/* Staged */}
                 {stagedFiles.length > 0 && (
-                  <div className="rounded" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-                    <div className="px-3 py-2 border-b" style={{ borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ color: "var(--green)" }} className="text-sm font-medium">Staged Changes</span>
+                  <div className="rounded-lg overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                    <div
+                      className="flex items-center justify-between px-4 py-2.5"
+                      style={{ background: "rgba(0,255,136,0.05)", borderBottom: "1px solid var(--border)" }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full"
+                          style={{ background: "var(--green)" }}
+                        />
+                        <span className="text-sm font-medium" style={{ color: "var(--green)" }}>
+                          Staged
+                        </span>
+                        <span className="text-xs font-mono px-1.5 rounded" style={{ background: "rgba(0,255,136,0.1)", color: "var(--green)" }}>
+                          {stagedFiles.length}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleUnstage(stagedFiles.map((f) => f.path))}
-                        className="text-xs"
-                        style={{ color: "var(--text)" }}
+                        className="text-xs px-2 py-1 rounded transition-colors"
+                        style={{ color: "var(--dim)" }}
                       >
                         Unstage All
                       </button>
                     </div>
-                    <div className="p-2">
-                    {stagedFiles.map((file) => (
-                        <div key={file.path} className="flex items-center gap-2 py-1 text-sm" style={{ display: "flex", alignItems: "center" }}>
-                          <span className="font-mono" style={{ color: statusColors[file.status] || "var(--dim)" }}>
-                            {file.status.toUpperCase().padEnd(8)}
-                          </span>
-                          <span style={{ color: "var(--text)" }}>{file.path}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleUnstage([file.path])}
-                            className="ml-auto text-xs"
-                            style={{ marginLeft: "auto", color: "var(--dim)" }}
+                    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                      {stagedFiles.map((file) => {
+                        const cfg = STATUS_CONFIG[file.status] || STATUS_CONFIG.unknown;
+                        return (
+                          <div
+                            key={file.path}
+                            className="flex items-center gap-3 px-4 py-2 group"
+                            style={{ borderBottom: "1px solid var(--border)" }}
                           >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
+                            <span
+                              className="badge text-xs font-mono"
+                              style={{ background: cfg.bg, color: cfg.color }}
+                            >
+                              {cfg.label}
+                            </span>
+                            <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
+                              {file.path}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUnstage([file.path])}
+                              className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
+                              style={{ color: "var(--dim)" }}
+                            >
+                              Unstage
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
+                {/* Unstaged */}
                 {unstagedFiles.length > 0 && (
-                  <div className="rounded" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-                    <div className="px-3 py-2 border-b" style={{ borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ color: "var(--yellow)" }} className="text-sm font-medium">Unstaged Changes</span>
+                  <div className="rounded-lg overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                    <div
+                      className="flex items-center justify-between px-4 py-2.5"
+                      style={{ background: "rgba(255,215,0,0.05)", borderBottom: "1px solid var(--border)" }}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full"
+                          style={{ background: "var(--yellow)" }}
+                        />
+                        <span className="text-sm font-medium" style={{ color: "var(--yellow)" }}>
+                          Unstaged
+                        </span>
+                        <span className="text-xs font-mono px-1.5 rounded" style={{ background: "rgba(255,215,0,0.1)", color: "var(--yellow)" }}>
+                          {unstagedFiles.length}
+                        </span>
+                      </div>
                       <button
                         type="button"
                         onClick={() => handleStage(unstagedFiles.map((f) => f.path))}
-                        className="text-xs"
-                        style={{ color: "var(--text)" }}
+                        className="text-xs px-2 py-1 rounded transition-colors"
+                        style={{ color: "var(--dim)" }}
                       >
                         Stage All
                       </button>
                     </div>
-                    <div className="p-2">
-                      {unstagedFiles.map((file) => (
-                        <div key={file.path} className="flex items-center gap-2 py-1 text-sm" style={{ display: "flex", alignItems: "center" }}>
-                          <span className="font-mono" style={{ color: statusColors[file.status] || "var(--dim)" }}>{file.status.toUpperCase().padEnd(8)}</span>
-                          <span style={{ color: "var(--text)" }}>{file.path}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleStage([file.path])}
-                            className="ml-auto text-xs"
-                            style={{ color: "var(--dim)" }}
+                    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                      {unstagedFiles.map((file) => {
+                        const cfg = STATUS_CONFIG[file.status] || STATUS_CONFIG.unknown;
+                        return (
+                          <div
+                            key={file.path}
+                            className="flex items-center gap-3 px-4 py-2 group"
+                            style={{ borderBottom: "1px solid var(--border)" }}
                           >
-                            +
-                          </button>
-                        </div>
-                      ))}
+                            <span
+                              className="badge text-xs font-mono"
+                              style={{ background: cfg.bg, color: cfg.color }}
+                            >
+                              {cfg.label}
+                            </span>
+                            <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
+                              {file.path}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleStage([file.path])}
+                              className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
+                              style={{ color: "var(--dim)" }}
+                            >
+                              Stage
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
 
-                <div className="rounded p-3" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-                  <h3 className="text-sm font-medium mb-2" style={{ color: "var(--text)" }}>Commit</h3>
-                  <textarea
-                    value={commitMessage}
-                    onChange={(e) => setCommitMessage(e.target.value)}
-                    placeholder="Commit message..."
-                    className="w-full px-3 py-2 rounded text-sm mb-2 resize-none"
-                    rows={3}
-                    style={{
-                      background: "rgba(30,45,74,0.5)",
-                      border: "1px solid var(--border)",
-                      color: "var(--text)",
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleCommit}
-                    disabled={loading || !commitMessage.trim() || stagedFiles.length === 0}
-                    className="px-4 py-2 rounded text-sm"
-                    style={{ background: "rgba(0,255,136,0.5)", border: "1px solid var(--border)", color: "var(--text)" }}
-                  >
-                    Commit
-                  </button>
+                {/* Commit */}
+                <div
+                  className="rounded-lg overflow-hidden"
+                  style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+                >
+                  <div className="p-4">
+                    <textarea
+                      value={commitMessage}
+                      onChange={(e) => setCommitMessage(e.target.value)}
+                      placeholder="Commit message..."
+                      className="w-full px-3 py-2 rounded text-sm resize-none font-mono"
+                      rows={3}
+                      style={{
+                        background: "rgba(30,45,74,0.5)",
+                        border: "1px solid var(--border)",
+                        color: "var(--text)",
+                      }}
+                    />
+                    <div className="flex items-center justify-between mt-3">
+                      <span className="text-xs" style={{ color: "var(--dim)" }}>
+                        {stagedFiles.length} file{stagedFiles.length !== 1 ? "s" : ""} staged
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCommit}
+                        disabled={loading || !commitMessage.trim() || stagedFiles.length === 0}
+                        className="px-5 py-2 rounded text-sm font-medium transition-opacity"
+                        style={{
+                          background: stagedFiles.length > 0 && commitMessage.trim()
+                            ? "rgba(0,255,136,0.2)"
+                            : "rgba(30,45,74,0.5)",
+                          border: "1px solid var(--border)",
+                          color: stagedFiles.length > 0 && commitMessage.trim() ? "var(--green)" : "var(--dim)",
+                        }}
+                      >
+                        Commit
+                      </button>
+                    </div>
+                  </div>
                 </div>
+
+                {/* Empty state */}
+                {status.files.length === 0 && (
+                  <div className="text-center py-12">
+                    <div className="mb-3" style={{ fontSize: "2.5rem", opacity: 0.5 }}>✓</div>
+                    <p className="text-sm" style={{ color: "var(--dim)" }}>Working tree clean</p>
+                  </div>
+                )}
               </div>
             )}
 
             {activeTab === "branches" && (
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-sm font-medium" style={{ color: "var(--text)" }}>Local & Remote Branches</h3>
+              <div className="p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-medium" style={{ color: "var(--text)" }}>Branches</h3>
                   <button
                     type="button"
                     onClick={() => setShowNewBranch(!showNewBranch)}
-                    className="px-3 py-1.5 rounded text-sm"
-                    style={{ background: "rgba(0, 120, 255, 0.25)", border: "1px solid var(--border)", color: "var(--text)" }}
+                    className="px-3 py-1.5 rounded text-xs font-medium"
+                    style={{ background: "rgba(0,180,255,0.15)", border: "1px solid rgba(0,180,255,0.3)", color: "#00b4ff" }}
                   >
                     {showNewBranch ? "Cancel" : "New Branch"}
                   </button>
                 </div>
 
                 {showNewBranch && (
-                  <div className="rounded p-3 flex gap-2" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                  <div
+                    className="flex items-center gap-3 p-4 rounded-lg"
+                    style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+                  >
                     <input
                       type="text"
                       value={newBranchName}
                       onChange={(e) => setNewBranchName(e.target.value)}
-                      placeholder="branch-name"
-                      className="flex-1 px-3 py-1.5 rounded text-sm"
+                      onKeyDown={(e) => e.key === "Enter" && handleCreateBranch()}
+                      placeholder="feature/branch-name"
+                      className="flex-1 px-3 py-2 rounded text-sm font-mono"
                       style={{ background: "rgba(30,45,74,0.5)", border: "1px solid var(--border)", color: "var(--text)" }}
                     />
                     <button
                       type="button"
                       onClick={handleCreateBranch}
                       disabled={!newBranchName.trim()}
-                      className="px-4 py-1.5 rounded text-sm"
-                      style={{ background: "rgba(0,255,136,0.5)", border: "1px solid var(--border)", color: "var(--text)" }}
+                      className="px-4 py-2 rounded text-sm font-medium"
+                      style={{
+                        background: newBranchName.trim() ? "rgba(0,255,136,0.2)" : "rgba(30,45,74,0.5)",
+                        border: "1px solid var(--border)",
+                        color: newBranchName.trim() ? "var(--green)" : "var(--dim)",
+                      }}
                     >
                       Create
                     </button>
                   </div>
                 )}
 
-                <div className="rounded" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                <div className="rounded-lg overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
                   {branches.map((branch) => (
                     <div
                       key={branch.name}
-                      className="flex items-center gap-2 px-3 py-2 border-b last:border-b-0"
-                      style={{ display: "flex", alignItems: "center", borderBottom: "1px solid var(--border)", padding: "0.5rem 0.75rem" }}
+                      className="flex items-center gap-3 px-4 py-3 group"
+                      style={{ borderBottom: "1px solid var(--border)" }}
                     >
-                      {branch.current && (
-                        <span style={{ color: "var(--green)" }}>●</span>
-                      )}
-                      <span className="font-mono text-sm" style={{ color: branch.current ? "var(--text)" : "var(--dim)" }}>
+                      <span
+                        className="w-2 h-2 rounded-full"
+                        style={{ background: branch.current ? "var(--green)" : "transparent", border: branch.current ? "none" : "1px solid var(--dim)" }}
+                      />
+                      <span className="font-mono text-sm flex-1" style={{ color: branch.current ? "var(--text)" : "var(--dim)" }}>
                         {branch.name}
                       </span>
                       {branch.remote && (
-                        <span style={{ color: "var(--cyan)" }} className="text-xs">remote</span>
+                        <span className="text-xs px-2 py-0.5 rounded" style={{ background: "rgba(0,212,255,0.1)", color: "var(--cyan)" }}>
+                          remote
+                        </span>
+                      )}
+                      {!branch.current && !branch.remote && (
+                        <button
+                          type="button"
+                          onClick={() => handleCheckout(branch.name)}
+                          className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
+                          style={{ color: "var(--cyan)" }}
+                        >
+                          Checkout
+                        </button>
                       )}
                       {!branch.current && !branch.remote && (
                         <button
                           type="button"
                           onClick={() => handleDeleteBranch(branch.name)}
-                          className="ml-auto text-xs"
+                          className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
                           style={{ color: "var(--red)" }}
                         >
                           Delete
@@ -566,22 +759,31 @@ export default function GitPage() {
             )}
 
             {activeTab === "log" && (
-              <div className="rounded" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-                {logs.map((log) => (
-                  <div
-                    key={log.hash}
-                    className="flex gap-4 px-3 py-3 border-b last:border-b-0"
-                    style={{ display: "flex", gap: "1rem", padding: "0.75rem 0.75rem", borderBottom: "1px solid var(--border)" }}
-                  >
-                    <span style={{ color: "var(--yellow)" }} className="font-mono text-sm">{log.shortHash}</span>
-                    <div className="flex-1" style={{ display: "flex", flexDirection: "column" }}>
-                      <div style={{ color: "var(--text)", fontSize: "0.875rem" }}>{log.message}</div>
-                      <div style={{ color: "var(--dim)", fontSize: "0.75rem", marginTop: "0.25rem" }}>
-                        {log.author} · {new Date(log.date).toLocaleString()}
+              <div className="p-4">
+                <div className="rounded-lg overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
+                  {logs.map((log, i) => (
+                    <div
+                      key={log.hash}
+                      className="flex items-start gap-4 px-4 py-3 group"
+                      style={{ borderBottom: i < logs.length - 1 ? "1px solid var(--border)" : "none" }}
+                    >
+                      <span
+                        className="font-mono text-xs px-2 py-1 rounded shrink-0"
+                        style={{ background: "rgba(255,215,0,0.1)", color: "var(--yellow)" }}
+                      >
+                        {log.shortHash}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm leading-snug" style={{ color: "var(--text)" }}>
+                          {log.message}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: "var(--dim)" }}>
+                          {log.author} · {new Date(log.date).toLocaleString()}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>
