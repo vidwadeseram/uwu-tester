@@ -373,30 +373,17 @@ function NewTaskForm({
       }
 
       const data = await res.json() as {
-        groups?: Array<{
-          name?: string;
-          path?: string;
-          projects?: Array<{ name?: string; path?: string }>;
-        }>;
+        projects?: Array<{ name?: string; path?: string }>;
       };
 
       const options: WorkspaceOption[] = [];
-      for (const group of data.groups ?? []) {
-        if (group.path) {
-          options.push({
-            name: group.name || group.path,
-            path: group.path,
-            kind: "group",
-          });
-        }
-        for (const project of group.projects ?? []) {
-          if (!project.path) continue;
-          options.push({
-            name: group.name ? `${group.name}/${project.name || project.path}` : (project.name || project.path),
-            path: project.path,
-            kind: "project",
-          });
-        }
+      for (const project of data.projects ?? []) {
+        if (!project.path) continue;
+        options.push({
+          name: project.name || project.path,
+          path: project.path,
+          kind: "project" as const,
+        });
       }
 
       if (options.length === 0) {

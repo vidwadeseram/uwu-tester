@@ -103,7 +103,7 @@ function ApiKeysSection({ authed }: { authed: boolean }) {
     <Section
       title="API Keys"
       icon={
-        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
         </svg>
       }
@@ -121,10 +121,11 @@ function ApiKeysSection({ authed }: { authed: boolean }) {
       <div className="flex flex-col gap-3">
         {Object.entries(KEY_LABELS).map(([k, meta]) => (
           <div key={k} className="flex flex-col gap-1">
-            <label className="text-xs font-medium" style={{ color: meta.color }}>{meta.label}</label>
+            <label htmlFor={`key-${k}`} className="text-xs font-medium" style={{ color: meta.color }}>{meta.label}</label>
             <div className="text-xs mb-0.5" style={{ color: "#2e4a7a" }}>{meta.hint}</div>
             <div className="flex flex-col sm:flex-row gap-2">
               <input
+                id={`key-${k}`}
                 type={reveal[k] ? "text" : "password"}
                 placeholder={keys[k] || "Not set"}
                 value={edits[k] ?? ""}
@@ -133,6 +134,7 @@ function ApiKeysSection({ authed }: { authed: boolean }) {
               />
               {keys[k] && (
                 <button
+                  type="button"
                   onClick={() => setReveal((r) => ({ ...r, [k]: !r[k] }))}
                   className="px-2.5 py-1.5 rounded text-xs flex-shrink-0"
                   style={{ background: "rgba(30,45,74,0.5)", color: "#94a3b8", border: "1px solid rgba(30,45,74,0.8)" }}
@@ -163,6 +165,7 @@ function ApiKeysSection({ authed }: { authed: boolean }) {
       )}
 
       <button
+        type="button"
         onClick={save}
         disabled={saving}
         className="self-start px-4 py-2 rounded text-sm font-semibold transition-opacity"
@@ -229,7 +232,7 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
     <Section
       title="Dashboard Login"
       icon={
-        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
           <path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </svg>
@@ -249,8 +252,9 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
       <form onSubmit={save} className="flex flex-col gap-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs" style={{ color: "#4a5568" }}>New Username</label>
+            <label htmlFor="new-username" className="text-xs" style={{ color: "#4a5568" }}>New Username</label>
             <input
+              id="new-username"
               type="text"
               autoComplete="username"
               value={username}
@@ -262,8 +266,9 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
           </div>
           {authState.authEnabled && (
             <div className="flex flex-col gap-1">
-              <label className="text-xs" style={{ color: "#4a5568" }}>Current Password</label>
+              <label htmlFor="current-password" className="text-xs" style={{ color: "#4a5568" }}>Current Password</label>
               <input
+                id="current-password"
                 type="password"
                 autoComplete="current-password"
                 value={currentPwd}
@@ -278,8 +283,9 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-xs" style={{ color: "#4a5568" }}>New Password</label>
+            <label htmlFor="new-password" className="text-xs" style={{ color: "#4a5568" }}>New Password</label>
             <input
+              id="new-password"
               type="password"
               autoComplete="new-password"
               value={newPwd}
@@ -290,8 +296,9 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
             />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-xs" style={{ color: "#4a5568" }}>Confirm Password</label>
+            <label htmlFor="confirm-password" className="text-xs" style={{ color: "#4a5568" }}>Confirm Password</label>
             <input
+              id="confirm-password"
               type="password"
               autoComplete="new-password"
               value={confirmPwd}
@@ -342,6 +349,142 @@ function CredentialsSection({ authState, onAuthChange }: { authState: AuthState;
           )}
         </div>
       </form>
+    </Section>
+  );
+}
+
+// ── GitHub Token section ──────────────────────────────────────────────────────
+
+function GitHubSection() {
+  const [token, setToken]         = useState("");
+  const [masked, setMasked]       = useState("");
+  const [connected, setConnected] = useState(false);
+  const [saving, setSaving]       = useState(false);
+  const [saved, setSaved]         = useState(false);
+  const [error, setError]         = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings/github");
+      if (res.ok) {
+        const data = await res.json();
+        setMasked(data.token || "");
+        setConnected(data.connected);
+      }
+    } catch {
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function save() {
+    if (!token.trim()) return;
+    setSaving(true); setError(""); setSaved(false);
+    try {
+      const res = await fetch("/api/settings/github", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: token.trim() }),
+      });
+      if (res.ok) {
+        setToken("");
+        setSaved(true);
+        load();
+        setTimeout(() => setSaved(false), 3000);
+      } else {
+        const d = await res.json();
+        setError(d.error ?? "Save failed");
+      }
+    } catch {
+      setError("Connection error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function disconnect() {
+    if (!confirm("Remove GitHub token? Git push/pull will stop working.")) return;
+    const res = await fetch("/api/settings/github", { method: "DELETE" });
+    if (res.ok) { load(); }
+  }
+
+  return (
+    <Section
+      title="GitHub"
+      icon={
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
+        </svg>
+      }
+    >
+      {connected ? (
+        <div className="text-xs px-3 py-2 rounded flex items-center gap-2" style={{ background: "rgba(0,255,136,0.08)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.2)" }}>
+          <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#00ff88" }} />
+          Connected — token: <code className="font-mono" style={{ color: "#94a3b8" }}>{masked}</code>
+        </div>
+      ) : (
+        <div className="text-xs px-3 py-2 rounded" style={{ background: "rgba(255,215,0,0.08)", color: "#ffd700", border: "1px solid rgba(255,215,0,0.2)" }}>
+          No GitHub token set. Git push/pull/clone to private repos won&apos;t work without it.
+        </div>
+      )}
+
+      <p className="text-xs" style={{ color: "#4a5568" }}>
+        Create a <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener noreferrer" style={{ color: "#00d4ff", textDecoration: "underline" }}>Personal Access Token</a> with repo scope. Used for git clone, push, and pull.
+      </p>
+
+      <div className="flex flex-col gap-1">
+        <label htmlFor="github-token" className="text-xs font-medium" style={{ color: "#a855f7" }}>Personal Access Token</label>
+        <div className="text-xs mb-0.5" style={{ color: "#2e4a7a" }}>ghp_… or github_pat_…</div>
+        <input
+          id="github-token"
+          type="password"
+          placeholder={connected ? "Paste new token to replace" : "ghp_xxxxxxxxxxxx"}
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          style={{ ...INPUT, fontFamily: "monospace" }}
+        />
+      </div>
+
+      {error && (
+        <div className="text-xs px-3 py-2 rounded" style={{ background: "rgba(255,68,68,0.1)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}>
+          {error}
+        </div>
+      )}
+
+      {saved && (
+        <div className="text-xs px-3 py-2 rounded" style={{ background: "rgba(0,255,136,0.08)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.2)" }}>
+          ✓ GitHub token saved
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !token.trim()}
+          className="px-4 py-2 rounded text-sm font-semibold transition-opacity"
+          style={{
+            background: "rgba(168,85,247,0.12)",
+            color: "#a855f7",
+            border: "1px solid rgba(168,85,247,0.3)",
+            cursor: saving || !token.trim() ? "not-allowed" : "pointer",
+            opacity: saving || !token.trim() ? 0.6 : 1,
+          }}
+        >
+          {saving ? "Saving…" : "Save Token"}
+        </button>
+
+        {connected && (
+          <button
+            type="button"
+            onClick={disconnect}
+            className="px-4 py-2 rounded text-sm transition-opacity hover:opacity-80"
+            style={{ background: "rgba(255,68,68,0.08)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}
+          >
+            Disconnect
+          </button>
+        )}
+      </div>
     </Section>
   );
 }
@@ -628,11 +771,12 @@ export default function SettingsPage() {
           </div>
           <div>
             <h1 className="text-lg font-bold" style={{ color: "#00d4ff" }}>Settings</h1>
-            <p className="text-xs" style={{ color: "#4a5568" }}>API keys · Models · Login credentials</p>
+            <p className="text-xs" style={{ color: "#4a5568" }}>API keys · GitHub · Models · Login credentials</p>
           </div>
         </div>
         {authState.authEnabled && (
           <button
+            type="button"
             onClick={logout}
             className="text-xs px-3 py-1.5 rounded transition-opacity hover:opacity-80"
             style={{ background: "rgba(255,68,68,0.08)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}
@@ -643,6 +787,7 @@ export default function SettingsPage() {
       </div>
 
       <ApiKeysSection authed={authState.ok} />
+      <GitHubSection />
       <ModelsSection />
       <CredentialsSection authState={authState} onAuthChange={checkAuth} />
     </div>

@@ -27,19 +27,6 @@ const NAV = [
     ),
   },
   {
-    href: "/chat",
-    label: "Chat",
-    exact: false,
-    color: "#00ff88",
-    icon: (
-      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <title>Chat</title>
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-      </svg>
-    ),
-  },
-
-  {
     href: "/scheduler",
     label: "Scheduler",
     exact: false,
@@ -62,32 +49,6 @@ const NAV = [
       <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <title>OpenClaw</title>
         <path d="M12 2a10 10 0 1 0 10 10" /><path d="M12 6v6l4 2" />
-      </svg>
-    ),
-  },
-  {
-    href: "/settings",
-    label: "Settings",
-    exact: false,
-    color: "#94a3b8",
-    icon: (
-      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <title>Settings</title>
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
-      </svg>
-    ),
-  },
-  // Additional navigation items
-  {
-    href: "/kanban",
-    label: "Kanban",
-    exact: false,
-    color: "#f97316",
-    icon: (
-      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <title>Kanban</title>
-        <rect x="3" y="3" width="7" height="18" rx="1" /><rect x="10" y="3" width="7" height="12" rx="1" /><rect x="17" y="3" width="5" height="18" rx="1" />
       </svg>
     ),
   },
@@ -124,6 +85,31 @@ const NAV = [
       <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <title>Git</title>
         <circle cx="18" cy="18" r="3" /><circle cx="6" cy="6" r="3" /><path d="M6 21V9a9 9 0 0 0 9 9" />
+      </svg>
+    ),
+  },
+  {
+    href: "/chat",
+    label: "Chat",
+    exact: false,
+    color: "#00ff88",
+    icon: (
+      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <title>Chat</title>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+    ),
+  },
+  {
+    href: "/settings",
+    label: "Settings",
+    exact: false,
+    color: "#94a3b8",
+    icon: (
+      <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <title>Settings</title>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
       </svg>
     ),
   },

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execSync } from "child_process";
+import { getGitEnv } from "@/lib/git-credentials";
 
 function getRepoPath(worktreeId?: string, projectId?: string): string | null {
   if (worktreeId) {
@@ -29,6 +30,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Worktree or project not found" }, { status: 404 });
     }
 
+    const env = getGitEnv();
     const args = setUpstream ? ["push", "-u", "origin", "HEAD"] : ["push"];
     const tagsArg = ["push", "--tags"];
 
@@ -36,12 +38,14 @@ export async function POST(request: NextRequest) {
       execSync(`git ${args.join(" ")}`, {
         cwd: repoPath,
         timeout: 60000,
+        env,
       });
     } catch {
       try {
         execSync(`git ${tagsArg.join(" ")}`, {
           cwd: repoPath,
           timeout: 60000,
+          env,
         });
       } catch {
       }

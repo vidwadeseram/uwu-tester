@@ -12,6 +12,7 @@ export interface Settings {
   password_hash: string;
   session_token: string;
   agent_api_key: string;
+  github_token?: string;
   models?: {
     openclaw?: string;
   };

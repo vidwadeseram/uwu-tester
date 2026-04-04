@@ -3,6 +3,7 @@ import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { execFileSync } from "child_process";
 import { validateProjectName } from "@/lib/sanitize";
+import { getGitToken, injectTokenIntoUrl } from "@/lib/git-credentials";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -129,7 +130,9 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        execFileSync("git", ["clone", "--depth=1", gitUrl, finalPath], {
+        const token = getGitToken();
+        const cloneUrl = injectTokenIntoUrl(gitUrl, token);
+        execFileSync("git", ["clone", "--depth=1", cloneUrl, finalPath], {
           encoding: "utf-8",
           timeout: 60000,
         });

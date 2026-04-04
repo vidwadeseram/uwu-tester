@@ -5,6 +5,7 @@ import SystemHeader from "./components/SystemHeader";
 import SessionsPanel from "./components/SessionsPanel";
 import CorePanel from "./components/CorePanel";
 import CoreToolsPanel from "./components/CoreToolsPanel";
+import ExposedPortsPanel from "./components/ExposedPortsPanel";
 import ProjectsPanel from "./components/ProjectsPanel";
 import ExposeModal from "./components/ExposeModal";
 
@@ -325,6 +326,12 @@ export default function DashboardPage() {
       <CoreToolsPanel
         ports={ports}
         loading={loading}
+      />
+
+      <ExposedPortsPanel
+        ports={ports}
+        onPortsChanged={handlePortsChanged}
+        refreshToken={exposedRefreshToken}
       />
 
       <SessionsPanel

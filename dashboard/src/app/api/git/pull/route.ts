@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { execSync } from "child_process";
+import { getGitEnv } from "@/lib/git-credentials";
 
 function getRepoPath(worktreeId?: string, projectId?: string): string | null {
   if (worktreeId) {
@@ -29,12 +30,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Worktree or project not found" }, { status: 404 });
     }
 
+    const env = getGitEnv();
     const args = rebase ? ["pull", "--rebase", "origin"] : ["pull", "origin"];
 
     try {
       execSync(`git ${args.join(" ")}`, {
         cwd: repoPath,
         timeout: 120000,
+        env,
       });
       return NextResponse.json({ success: true });
     } catch (err) {
