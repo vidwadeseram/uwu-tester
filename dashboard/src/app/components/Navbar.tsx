@@ -197,10 +197,11 @@ export default function Navbar() {
               );
             })}
 
-            {/* Terminal — external link */}
-            <a
-              href="/terminal/"
-              title="Terminal"
+            {/* Terminal — always opens a new tab (each tab = own session) */}
+            <button
+              type="button"
+              title="Terminal (new tab)"
+              onClick={() => window.open("/terminal/", "_blank", "noopener,noreferrer")}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all"
               style={{ color: "#4a5568", borderBottom: "2px solid transparent" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#00ff88")}
@@ -212,11 +213,11 @@ export default function Navbar() {
               </svg>
               <span className="hidden lg:inline">Terminal</span>
               <svg className="w-2.5 h-2.5 opacity-40 hidden lg:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <title>Chevron</title>
+                <title>External</title>
                 <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
                 <polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" />
               </svg>
-            </a>
+            </button>
           </div>
 
           {/* Right: system info + clock */}
@@ -284,9 +285,10 @@ export default function Navbar() {
               </Link>
             );
           })}
-          <a
-            href="/terminal/"
-            className="flex items-center gap-3 px-5 py-3 text-sm font-medium"
+          <button
+            type="button"
+            onClick={() => window.open("/terminal/", "_blank", "noopener,noreferrer")}
+            className="flex items-center gap-3 px-5 py-3 text-sm font-medium w-full text-left"
             style={{ color: "#94a3b8" }}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -294,7 +296,7 @@ export default function Navbar() {
               <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
             </svg>
             Terminal ↗
-          </a>
+          </button>
         </div>
       )}
     </>
