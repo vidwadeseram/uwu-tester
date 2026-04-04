@@ -62,15 +62,21 @@ interface ProjectIssues {
   error: string | null;
 }
 
+interface ProjectPanelProps {
+  projectIssues: ProjectIssues;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onAddToQueue?: (issue: GitHubIssue, repoOwner: string, repoName: string) => void;
+  addingIssueId?: number | null;
+}
+
 function ProjectPanel({
   projectIssues,
   isExpanded,
   onToggle,
-}: {
-  projectIssues: ProjectIssues;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
+  onAddToQueue,
+  addingIssueId,
+}: ProjectPanelProps) {
   const { project, data, loading, error } = projectIssues;
   const totalIssues = data
     ? data.milestones.reduce((sum, m) => sum + m.issues.length, 0) + data.unassigned.length
@@ -165,7 +171,14 @@ function ProjectPanel({
           {data && (
             <>
               {data.milestones.map((mg) => (
-                <MilestoneSection key={mg.milestone.id} milestoneGroup={mg} />
+                <MilestoneSection
+                  key={mg.milestone.id}
+                  milestoneGroup={mg}
+                  repoOwner={data.owner}
+                  repoName={data.repo}
+                  onAddToQueue={onAddToQueue}
+                  addingIssueId={addingIssueId}
+                />
               ))}
 
               {data.unassigned.length > 0 && (
@@ -184,6 +197,10 @@ function ProjectPanel({
                     },
                     issues: data.unassigned,
                   }}
+                  repoOwner={data.owner}
+                  repoName={data.repo}
+                  onAddToQueue={onAddToQueue}
+                  addingIssueId={addingIssueId}
                 />
               )}
 
@@ -200,7 +217,15 @@ function ProjectPanel({
   );
 }
 
-function MilestoneSection({ milestoneGroup }: { milestoneGroup: MilestoneGroup }) {
+interface MilestoneSectionProps {
+  milestoneGroup: MilestoneGroup;
+  repoOwner: string;
+  repoName: string;
+  onAddToQueue?: (issue: GitHubIssue, repoOwner: string, repoName: string) => void;
+  addingIssueId?: number | null;
+}
+
+function MilestoneSection({ milestoneGroup, repoOwner, repoName, onAddToQueue, addingIssueId }: MilestoneSectionProps) {
   const [expanded, setExpanded] = useState(true);
   const { milestone, issues } = milestoneGroup;
 
@@ -250,7 +275,14 @@ function MilestoneSection({ milestoneGroup }: { milestoneGroup: MilestoneGroup }
       {expanded && (
         <div className="space-y-1 p-2">
           {issues.map((issue) => (
-            <IssueRow key={issue.id} issue={issue} />
+            <IssueRow
+              key={issue.id}
+              issue={issue}
+              repoOwner={repoOwner}
+              repoName={repoName}
+              onAddToQueue={onAddToQueue}
+              adding={addingIssueId === issue.id}
+            />
           ))}
         </div>
       )}
@@ -258,67 +290,85 @@ function MilestoneSection({ milestoneGroup }: { milestoneGroup: MilestoneGroup }
   );
 }
 
-function IssueRow({ issue }: { issue: GitHubIssue }) {
+interface IssueRowProps {
+  issue: GitHubIssue;
+  repoOwner: string;
+  repoName: string;
+  onAddToQueue?: (issue: GitHubIssue, repoOwner: string, repoName: string) => void;
+  adding?: boolean;
+}
+
+function IssueRow({ issue, repoOwner, repoName, onAddToQueue, adding }: IssueRowProps) {
   return (
-    <a
-      href={issue.html_url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex items-start gap-2 px-2 py-1.5 rounded transition-colors hover:bg-white/5 group"
-    >
-      <span
-        className="text-xs font-mono flex-shrink-0"
-        style={{ color: "#ffd700" }}
+    <div className="flex items-start gap-2 px-2 py-1.5 rounded transition-colors hover:bg-white/5 group">
+      <a
+        href={issue.html_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-start gap-2 flex-1 min-w-0"
       >
-        #{issue.number}
-      </span>
-      <span className="text-xs flex-1 line-clamp-2" style={{ color: "#e2e8f0" }}>
-        {issue.title}
-      </span>
-      {issue.labels.length > 0 && (
-        <div className="flex gap-1 flex-shrink-0">
-          {issue.labels.slice(0, 2).map((label) => (
-            <span
-              key={label.name}
-              className="text-xs px-1.5 py-0.5 rounded"
-              style={{
-                background: `#${label.color}20`,
-                color: `#${label.color}`,
-                border: `1px solid #${label.color}40`,
-              }}
-            >
-              {label.name}
-            </span>
-          ))}
-          {issue.labels.length > 2 && (
-            <span className="text-xs" style={{ color: "#4a5568" }}>
-              +{issue.labels.length - 2}
-            </span>
-          )}
-        </div>
+        <span
+          className="text-xs font-mono flex-shrink-0"
+          style={{ color: "#ffd700" }}
+        >
+          #{issue.number}
+        </span>
+        <span className="text-xs flex-1 line-clamp-2" style={{ color: "#e2e8f0" }}>
+          {issue.title}
+        </span>
+        {issue.labels.length > 0 && (
+          <div className="flex gap-1 flex-shrink-0">
+            {issue.labels.slice(0, 2).map((label) => (
+              <span
+                key={label.name}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{
+                  background: `#${label.color}20`,
+                  color: `#${label.color}`,
+                  border: `1px solid #${label.color}40`,
+                }}
+              >
+                {label.name}
+              </span>
+            ))}
+            {issue.labels.length > 2 && (
+              <span className="text-xs" style={{ color: "#4a5568" }}>
+                +{issue.labels.length - 2}
+              </span>
+            )}
+          </div>
+        )}
+      </a>
+      {onAddToQueue && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            onAddToQueue(issue, repoOwner, repoName);
+          }}
+          disabled={adding}
+          className="text-xs px-2 py-1 rounded flex-shrink-0 transition-opacity opacity-0 group-hover:opacity-100 disabled:opacity-50"
+          style={{
+            background: "rgba(0,255,136,0.1)",
+            color: "#00ff88",
+            border: "1px solid rgba(0,255,136,0.25)",
+            cursor: adding ? "wait" : "pointer",
+          }}
+        >
+          {adding ? "Adding..." : "+ Queue"}
+        </button>
       )}
-      <svg
-        className="w-3 h-3 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-        style={{ color: "#4a5568" }}
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        aria-hidden="true"
-      >
-        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-        <polyline points="15 3 21 3 21 9" />
-        <line x1="10" y1="14" x2="21" y2="3" />
-      </svg>
-    </a>
+    </div>
   );
 }
 
 interface IssuesPanelProps {
   refreshToken?: number;
+  onAddToQueue?: (issue: GitHubIssue, repoOwner: string, repoName: string) => void;
+  addingIssueId?: number | null;
 }
 
-export default function IssuesPanel({ refreshToken }: IssuesPanelProps) {
+export default function IssuesPanel({ refreshToken, onAddToQueue, addingIssueId }: IssuesPanelProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [issuesData, setIssuesData] = useState<Map<string, ProjectIssues>>(new Map());
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
@@ -490,6 +540,8 @@ export default function IssuesPanel({ refreshToken }: IssuesPanelProps) {
             }}
             isExpanded={expandedProjects.has(project.id)}
             onToggle={() => toggleProject(project.id)}
+            onAddToQueue={onAddToQueue}
+            addingIssueId={addingIssueId}
           />
         ))}
     </div>

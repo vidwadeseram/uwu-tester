@@ -810,12 +810,22 @@ function NewTaskForm({
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+interface GitHubIssueForQueue {
+  id: number;
+  number: number;
+  title: string;
+  html_url: string;
+  labels: Array<{ name: string; color: string }>;
+  milestone: { title: string } | null;
+}
+
 export default function SchedulerPage() {
   const [tasks, setTasks]         = useState<Task[]>([]);
   const [loading, setLoading]     = useState(true);
   const [tab, setTab]             = useState<"active" | "completed">("active");
   const [showForm, setShowForm]   = useState(false);
   const [report, setReport]       = useState<Task | null>(null);
+  const [addingIssueId, setAddingIssueId] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchTasks = useCallback(async () => {
@@ -834,6 +844,32 @@ export default function SchedulerPage() {
     fetchTasks();
     timerRef.current = setInterval(fetchTasks, 5000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [fetchTasks]);
+
+  const handleAddIssueToQueue = useCallback(async (issue: GitHubIssueForQueue, repoOwner: string, repoName: string) => {
+    setAddingIssueId(issue.id);
+    try {
+      const description = `GitHub Issue #${issue.number}: ${issue.title}\n\n${issue.html_url}`;
+      const res = await fetch("/api/scheduler/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "coding",
+          title: issue.title,
+          description,
+          schedule_mode: "anytime",
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to create task");
+      }
+      fetchTasks();
+    } catch (err) {
+      console.error("Failed to add issue to queue:", err);
+    } finally {
+      setAddingIssueId(null);
+    }
   }, [fetchTasks]);
 
   async function deleteTask(id: string) {
@@ -932,7 +968,7 @@ export default function SchedulerPage() {
       )}
 
       {/* Git Issues Panel */}
-      <IssuesPanel />
+      <IssuesPanel onAddToQueue={handleAddIssueToQueue} addingIssueId={addingIssueId} />
 
       {/* Tabs */}
       <div className="flex gap-1 border-b overflow-x-auto" style={{ borderColor: "#1e2d4a" }}>
