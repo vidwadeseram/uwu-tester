@@ -85,7 +85,7 @@ systemctl status uwu-code uwu-code-ttyd uwu-code-openclaw
 ## Updating
 
 ```bash
-cd /opt/uwu-code && git pull && cd dashboard && npm ci && npm run build
+cd /opt/uwu-code && git pull && cd dashboard && bun install --frozen-lockfile && bun run build
 systemctl restart uwu-code uwu-code-openclaw
 ```
 
