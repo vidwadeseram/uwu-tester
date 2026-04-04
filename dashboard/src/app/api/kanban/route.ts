@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       title,
       description: description || null,
       column,
-      position: dueDate ? new Date(dueDate).getTime() : maxPosition,
+      position: maxPosition,
       priority: priority || "medium",
       assignee: assignee || null,
       labels: labels || null,

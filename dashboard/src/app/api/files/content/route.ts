@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "fs/promises";
+import { safePath } from "@/lib/sanitize";
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,7 +35,7 @@ export async function GET(request: NextRequest) {
       basePath = project.path;
     }
 
-    const fullPath = `${basePath}/${filePath}`;
+    const fullPath = safePath(basePath, filePath);
 
     try {
       const content = await readFile(fullPath, "utf-8");
@@ -79,7 +80,7 @@ export async function PUT(request: NextRequest) {
       basePath = project.path;
     }
 
-    const fullPath = `${basePath}/${path}`;
+    const fullPath = safePath(basePath, path);
 
     try {
       const { writeFile } = await import("fs/promises");

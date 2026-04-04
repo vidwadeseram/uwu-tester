@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execSync, execFileSync } from "child_process";
+import { execFileSync } from "child_process";
 import { validateGitRef } from "@/lib/sanitize";
 
 function getRepoPath(worktreeId?: string, projectId?: string): string | null {

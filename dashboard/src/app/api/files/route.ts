@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
+import { safePath } from "@/lib/sanitize";
 import { rm } from "fs/promises";
 import { stat } from "fs/promises";
 
@@ -36,14 +37,14 @@ export async function DELETE(request: NextRequest) {
       repoPath = project.path;
     }
 
-    const fullPath = `${repoPath}/${filePath}`;
+    const fullPath = safePath(repoPath, filePath);
 
     try {
       const stats = await stat(fullPath);
       if (stats.isDirectory()) {
-        execSync(`git rm -r "${filePath}"`, { cwd: repoPath, timeout: 10000 });
+        execFileSync("git", ["rm", "-r", filePath], { cwd: repoPath, timeout: 10000 });
       } else {
-        execSync(`git rm "${filePath}"`, { cwd: repoPath, timeout: 10000 });
+        execFileSync("git", ["rm", filePath], { cwd: repoPath, timeout: 10000 });
       }
     } catch {
       try {

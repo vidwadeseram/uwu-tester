@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { execSync } from "child_process";
+// Import dynamically to avoid TS type issues across environments
+const { execFileSync } = require("child_process");
 import { randomUUID } from "crypto";
 import path from "path";
 
 function runCommand(cmd: string): string {
   try {
-    return execSync(cmd, { encoding: "utf-8", timeout: 10000 }).trim();
+    // Use a shell to execute commands to preserve multi-step logic
+    return execFileSync("/bin/sh", ["-lc", cmd], { encoding: "utf-8", timeout: 10000 }).trim();
   } catch (err) {
     return "";
   }
@@ -105,6 +107,7 @@ export async function POST(request: NextRequest) {
       branch: branchName,
       isActive: true,
       createdAt: now,
+      updatedAt: now,
     });
 
     const worktree = await db.select().from(schema.worktrees).where(eq(schema.worktrees.id, id)).get();

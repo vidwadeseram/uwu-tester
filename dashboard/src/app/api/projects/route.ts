@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
+import { validateProjectName } from "@/lib/sanitize";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -35,7 +36,10 @@ function sanitizeRemoteUrl(remoteUrl: string): string {
 
 function getGitBranch(dir: string): string {
   try {
-    return execSync(`git -C "${dir}" branch --show-current`, { encoding: "utf-8", timeout: 5000 }).trim();
+    return execFileSync("git", ["-C", dir, "branch", "--show-current"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
   } catch {
     return "";
   }
@@ -43,7 +47,10 @@ function getGitBranch(dir: string): string {
 
 function getGitRemote(dir: string): string {
   try {
-    return execSync(`git -C "${dir}" remote get-url origin`, { encoding: "utf-8", timeout: 5000 }).trim();
+    return execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], {
+      encoding: "utf-8",
+      timeout: 5000,
+    }).trim();
   } catch {
     return "";
   }
@@ -93,7 +100,12 @@ export async function POST(req: NextRequest) {
     }
 
     const id = randomUUID();
+    // Validate project name and path safety
+    validateProjectName(name);
     const projectPath = path.join(PROJECTS_ROOT, name);
+    if (!isWithinProjectsRoot(projectPath)) {
+      return NextResponse.json({ success: false, message: "Invalid project path" }, { status: 400 });
+    }
 
     if (fs.existsSync(projectPath)) {
       return NextResponse.json(
@@ -117,7 +129,7 @@ export async function POST(req: NextRequest) {
       }
 
       try {
-        execSync(`git clone --depth=1 "${gitUrl}" "${finalPath}"`, {
+        execFileSync("git", ["clone", "--depth=1", gitUrl, finalPath], {
           encoding: "utf-8",
           timeout: 60000,
         });

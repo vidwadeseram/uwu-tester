@@ -23,8 +23,14 @@ TASKS_FILE = DATA_DIR / "tasks.json"
 STATUS_FILE = DATA_DIR / "status.json"
 LOG_FILE = DATA_DIR / "agent.log"
 SETTINGS_FILE = AGENT_DIR.parent / "settings.json"
-ENV_FILE = AGENT_DIR.parent / "regression_tests" / ".env"
+ENV_FILE = AGENT_DIR / ".env"
 POLL_INTERVAL = 10  # seconds
+from audit import (
+    log_task_created,
+    log_task_updated,
+    log_task_cancelled,
+    get_rate_limiter,
+)
 
 TaskDict = dict[str, Any]
 
@@ -182,6 +188,16 @@ def create_task(
     tasks.append(new_task)
     save_tasks(tasks)
     log(f"Created task: {task_id} - {new_task.get('title', '')[:50]}")
+    # Audit: log task creation
+    try:
+        log_task_created(
+            task_id,
+            str(new_task.get("title") if new_task.get("title") is not None else ""),
+            str(new_task.get("type") if new_task.get("type") is not None else ""),
+            str(new_task.get("schedule_mode") if new_task.get("schedule_mode") is not None else ""),
+        )
+    except Exception:
+        pass
     return new_task
 
 
@@ -277,6 +293,7 @@ def create_template_task(
 MUTABLE_FIELDS = {
     "title", "description", "status", "schedule_mode",
     "schedule_time", "schedule_weekday", "preferred_tool", "workspace",
+    "scheduled_at", "one_time_at",
 }
 
 
@@ -296,6 +313,11 @@ def update_existing_task(
             client = get_api_client()
             task = client.update_task(task_id, updates)
             log(f"Updated task {task_id} via API: {list(updates.keys())}")
+            # Audit: log task update
+            try:
+                log_task_updated(task_id, updates as any)
+            except Exception:
+                pass
             return task
         except Exception as e:
             log(f"Failed to update task via API: {e}")
@@ -307,6 +329,11 @@ def update_existing_task(
             log(f"Updating task {task_id}: {list(updates.keys())}")
             tasks[i].update(updates)
             save_tasks(tasks)
+            # Audit: log task update
+            try:
+                log_task_updated(task_id, updates as any)
+            except Exception:
+                pass
             return tasks[i]
     log(f"Task {task_id} not found")
     return None
@@ -695,7 +722,7 @@ def run_research_task(task: TaskDict) -> tuple[bool | None, str]:
             if is_rate_limited(err):
                 return None, err
 
-    return False, "No LLM API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in regression_tests/.env"
+    return False, "No LLM API key configured. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or OPENROUTER_API_KEY in settings or .env"
 
 
 # ── task runner ───────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 function getRepoPath(worktreeId?: string, projectId?: string): string | null {
   if (worktreeId) {
@@ -36,13 +36,13 @@ export async function POST(request: NextRequest) {
     const fullMessage = description ? `${message}\n\n${description}` : message;
 
     try {
-      const output = execSync(`git commit -m "${fullMessage.replace(/"/g, '\\"')}"`, {
+      const output = execFileSync("git", ["commit", "-m", fullMessage], {
         encoding: "utf-8",
         cwd: repoPath,
         timeout: 30000,
       });
 
-      const commitHash = execSync("git rev-parse HEAD", {
+      const commitHash = execFileSync("git", ["rev-parse", "HEAD"], {
         encoding: "utf-8",
         cwd: repoPath,
         timeout: 5000,

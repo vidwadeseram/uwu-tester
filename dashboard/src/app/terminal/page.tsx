@@ -125,10 +125,10 @@ export default function TerminalPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#1e1e1e]">
-      <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-[#3c3c3c]">
+    <div className="flex flex-col h-screen bg-background">
+      <div className="flex items-center justify-between px-4 py-2 bg-muted border-b border-border">
         <div className="flex items-center gap-4">
-          <span className="text-sm text-[#d4d4d4]">
+          <span className="text-sm text-foreground">
             Terminal {session ? `(${session.tmuxSession})` : ""}
           </span>
           <span
@@ -145,21 +145,21 @@ export default function TerminalPage() {
           <button
             type="button"
             onClick={createNewTab}
-            className="px-3 py-1 text-sm bg-[#0e639c] text-white rounded hover:bg-[#1177bb]"
+            className="px-3 py-1 text-sm bg-primary hover:bg-primary/90 text-white rounded"
           >
             New Tab
           </button>
           <button
             type="button"
             onClick={openFullTerminal}
-            className="px-3 py-1 text-sm bg-[#4a4a4a] text-white rounded hover:bg-[#5a5a5a]"
+            className="px-3 py-1 text-sm bg-muted text-white rounded hover:bg-muted/80"
           >
             Open Full Terminal
           </button>
           <button
             type="button"
             onClick={closeSession}
-            className="px-3 py-1 text-sm bg-[#c50f1f] text-white rounded hover:bg-[#e81123]"
+            className="px-3 py-1 text-sm bg-destructive text-white rounded hover:bg-destructive/90"
           >
             Close
           </button>
@@ -167,7 +167,7 @@ export default function TerminalPage() {
       </div>
 
       {error && (
-        <div className="px-4 py-2 bg-[#f48771] text-white text-sm">{error}</div>
+        <div className="px-4 py-2 bg-destructive text-white text-sm">{error}</div>
       )}
 
       <div ref={terminalRef} className="flex-1 p-2" />

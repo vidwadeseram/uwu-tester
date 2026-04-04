@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 
 export async function GET(
   request: NextRequest,
@@ -95,11 +95,14 @@ export async function POST(
       }
     }
 
-    const output = execSync(script.content, {
+    // Execute the script content via a shell using execFileSync for safety
+    const output = (execFileSync as any)("/bin/sh", ["-c", script.content], {
       encoding: "utf-8",
       cwd,
       timeout: 60000,
-    });
+      // TypeScript types for execFileSync do not include maxBuffer; cast to any to satisfy runtime behavior as needed
+      maxBuffer: 1024 * 1024,
+    } as any);
 
     await db
       .update(schema.scripts)

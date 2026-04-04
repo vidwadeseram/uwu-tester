@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
+import { safePath } from "@/lib/sanitize";
 import { readdir, stat } from "fs/promises";
 import { join } from "path";
 
@@ -14,11 +15,11 @@ interface FileNode {
 
 function getGitStatus(filePath: string, repoPath: string): FileNode["gitStatus"] {
   try {
-    const output = execSync(`git status --porcelain "${filePath}"`, {
+    const output = execFileSync("git", ["status", "--porcelain", filePath], {
       encoding: "utf-8",
       cwd: repoPath,
       timeout: 5000,
-    }).trim();
+    }).toString().trim();
 
     if (!output) return undefined;
 
@@ -86,7 +87,7 @@ async function buildFileTree(
 
 function findGitRoot(filePath: string): string | null {
   try {
-    const gitRoot = execSync("git rev-parse --show-toplevel", {
+    const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
       cwd: filePath,
       timeout: 5000,
@@ -135,7 +136,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Not a git repository" }, { status: 400 });
     }
 
-    const targetPath = path ? join(repoPath, path) : repoPath;
+    const targetPath = path ? safePath(repoPath, path) : repoPath;
 
     const tree = await buildFileTree(targetPath, repoPath, gitRoot);
 

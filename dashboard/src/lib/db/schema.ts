@@ -29,6 +29,7 @@ export const worktrees = sqliteTable("worktrees", {
   port: integer("port"),
   isActive: integer("is_active", { mode: "boolean" }).default(true),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
 export const worktreesRelations = relations(worktrees, ({ one, many }) => ({
