@@ -138,226 +138,12 @@ const SUGGESTIONS = [
   "What's the best way to monitor VPS performance?",
 ];
 
-interface ScheduleModalProps {
-  onClose: () => void;
-  defaultTitle: string;
-  defaultDescription: string;
-}
-
-function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleModalProps) {
-  const [title, setTitle] = useState(defaultTitle);
-  const [description, setDescription] = useState(defaultDescription);
-  const [type, setType] = useState<"research" | "coding">("research");
-  const [workspace, setWorkspace] = useState("/opt/workspaces");
-  const [tool, setTool] = useState<"auto" | "claude" | "opencode">("auto");
-  const [useWorktree, setUseWorktree] = useState(false);
-  const [projects, setProjects] = useState<Array<{ id: string; name: string; path: string }>>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState("");
-  const [worktrees, setWorktrees] = useState<Array<{ id: string; name: string; path: string; branch: string }>>([]);
-  const [selectedWorktreeId, setSelectedWorktreeId] = useState("");
-  const [createNewWorktree, setCreateNewWorktree] = useState(false);
-  const [newWorktreeName, setNewWorktreeName] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
-  const [schedErr, setSchedErr] = useState("");
-
-  useEffect(() => {
-    fetch("/api/projects").then(r => r.json()).then(d => {
-      const projs = d.projects ?? d ?? [];
-      if (Array.isArray(projs)) {
-        setProjects(projs);
-        if (projs.length > 0) {
-          setSelectedProjectId(projs[0].id);
-          setWorkspace(projs[0].path || "/opt/workspaces");
-        }
-      }
-    }).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (!selectedProjectId || !useWorktree) return;
-    fetch(`/api/worktrees?projectId=${selectedProjectId}`)
-      .then(r => r.json())
-      .then(d => { setWorktrees(d.worktrees || []); setSelectedWorktreeId(""); })
-      .catch(() => {});
-  }, [selectedProjectId, useWorktree]);
-
-  useEffect(() => {
-    if (!useWorktree) return;
-    const proj = projects.find(p => p.id === selectedProjectId);
-    if (proj) setWorkspace(proj.path);
-  }, [selectedProjectId, useWorktree, projects]);
-
-  async function handleSchedule() {
-    if (!description.trim()) return;
-    setSaving(true); setSchedErr("");
-    try {
-      let finalWorkspace = type === "coding" ? workspace : undefined;
-
-      if (type === "coding" && useWorktree) {
-        if (createNewWorktree && newWorktreeName.trim() && selectedProjectId) {
-          const wtRes = await fetch("/api/worktrees", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projectId: selectedProjectId,
-              name: newWorktreeName.trim(),
-              branch: newWorktreeName.trim(),
-              isNewBranch: true,
-            }),
-          });
-          if (wtRes.ok) {
-            const wtData = await wtRes.json();
-            finalWorkspace = wtData.worktree?.path || workspace;
-          }
-        } else if (selectedWorktreeId) {
-          const wt = worktrees.find(w => w.id === selectedWorktreeId);
-          if (wt) finalWorkspace = wt.path;
-        }
-      }
-
-      const res = await fetch("/api/scheduler/tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim() || undefined,
-          type,
-          description: description.trim(),
-          workspace: finalWorkspace,
-          preferred_tool: type === "coding" ? tool : undefined,
-          schedule_mode: "anytime",
-        }),
-      });
-      if (!res.ok) {
-        const d = await res.json();
-        setSchedErr(d.error || "Failed to create task");
-        return;
-      }
-      setDone(true);
-      setTimeout(onClose, 1200);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const IS = {
-    background: "var(--bg)",
-    border: "1px solid var(--border)",
-    color: "var(--text)",
-    borderRadius: "6px",
-    padding: "8px 12px",
-    fontSize: "0.8rem",
-    outline: "none",
-    width: "100%",
-  } as const;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div
-        className="w-full sm:max-w-lg max-h-[90vh] flex flex-col rounded-t-2xl sm:rounded-lg overflow-hidden"
-        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-      >
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
-          <span className="font-semibold text-sm" style={{ color: "#ffd700" }}>Schedule as Task</span>
-          <button type="button" onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--border)" }}>✕</button>
-        </div>
-        <div className="flex-1 overflow-auto p-5 space-y-4">
-          {done ? (
-            <div className="text-center py-4 text-sm" style={{ color: "#00ff88" }}>✓ Task queued in Scheduler</div>
-          ) : (
-            <>
-              <div className="flex gap-2">
-                {(["research", "coding"] as const).map((t) => (
-                  <button key={t} type="button" onClick={() => setType(t)}
-                    className="flex-1 py-2 rounded text-xs font-medium"
-                    style={{
-                      background: type === t ? (t === "coding" ? "rgba(0,212,255,0.15)" : "rgba(168,85,247,0.15)") : "var(--btn-bg)",
-                      color: type === t ? (t === "coding" ? "var(--cyan)" : "#a855f7") : "var(--dim)",
-                      border: `1px solid ${type === t ? (t === "coding" ? "rgba(0,212,255,0.4)" : "rgba(168,85,247,0.4)") : "var(--border)"}`,
-                    }}
-                  >{t === "coding" ? "💻 Coding" : "🔬 Research"}</button>
-                ))}
-              </div>
-
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title (optional)" style={IS} />
-
-              {type === "coding" && (
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <input type="checkbox" id="sched-use-wt" checked={useWorktree} onChange={(e) => setUseWorktree(e.target.checked)} />
-                    <label htmlFor="sched-use-wt" className="text-xs" style={{ color: "var(--dim)" }}>Use Worktree (isolated branch)</label>
-                  </div>
-
-                  {useWorktree ? (
-                    <div className="space-y-2 pl-4">
-                      {projects.length > 0 && (
-                        <select style={IS} value={selectedProjectId} onChange={(e) => setSelectedProjectId(e.target.value)}>
-                          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                      )}
-                      <div className="flex items-center gap-2">
-                        <input type="checkbox" id="sched-new-wt" checked={createNewWorktree} onChange={(e) => setCreateNewWorktree(e.target.checked)} />
-                        <label htmlFor="sched-new-wt" className="text-xs" style={{ color: "var(--dim)" }}>Create new worktree</label>
-                      </div>
-                      {createNewWorktree ? (
-                        <input style={IS} placeholder="Worktree name / branch" value={newWorktreeName} onChange={(e) => setNewWorktreeName(e.target.value)} />
-                      ) : (
-                        <select style={IS} value={selectedWorktreeId} onChange={(e) => setSelectedWorktreeId(e.target.value)}>
-                          <option value="">Use project root</option>
-                          {worktrees.map(w => <option key={w.id} value={w.id}>{w.name} ({w.branch})</option>)}
-                        </select>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <input style={{ ...IS, flex: "1" }} placeholder="Workspace path" value={workspace} onChange={(e) => setWorkspace(e.target.value)} />
-                      <select style={{ ...IS, width: "100px" }} value={tool} onChange={(e) => setTool(e.target.value as "auto" | "claude" | "opencode")}>
-                        <option value="auto">Auto</option>
-                        <option value="claude">Claude</option>
-                        <option value="opencode">OpenCode</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Describe the task..." className="resize-none" style={{ ...IS, minHeight: "80px" }} />
-
-              {schedErr && (
-                <div className="text-xs px-3 py-2 rounded" style={{ background: "rgba(255,68,68,0.1)", color: "#ff4444", border: "1px solid rgba(255,68,68,0.2)" }}>
-                  {schedErr}
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-1">
-                <button type="button" onClick={handleSchedule} disabled={saving || !description.trim()} className="flex-1 py-2 rounded text-sm font-medium disabled:opacity-50" style={{ background: "rgba(255,215,0,0.12)", color: "#ffd700", border: "1px solid rgba(255,215,0,0.3)" }}>
-                  {saving ? (
-                    <span className="flex items-center justify-center">
-                      <span className="spinner w-4 h-4 inline-block" style={{ border: "2px solid rgba(255,215,0,0.2)", borderTopColor: "#ffd700" }} />
-                    </span>
-                  ) : "Queue Task"}
-                </button>
-                <button type="button" onClick={onClose} className="px-4 py-2 rounded text-sm" style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--border)" }}>Cancel</button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
-  const [showSchedule, setShowSchedule] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -444,13 +230,6 @@ export default function ChatPage() {
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
-  const scheduleTitle = messages.length > 0
-    ? (messages.find((m) => m.role === "user")?.content.slice(0, 80) ?? "")
-    : "";
-  const scheduleDesc = messages.length > 0
-    ? messages.filter((m) => m.role === "user").map((m) => m.content).join("\n---\n").slice(0, 500)
-    : "";
-
   const isEmpty = messages.length === 0;
 
   return (
@@ -485,18 +264,6 @@ export default function ChatPage() {
             compact
             placeholder="Workspace context"
           />
-
-          <button
-            onClick={() => setShowSchedule(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-            style={{ background: "rgba(255,215,0,0.08)", color: "#ffd700", border: "1px solid rgba(255,215,0,0.2)" }}
-            title="Schedule a task"
-          >
-            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
-            </svg>
-            Schedule
-          </button>
 
           {!isEmpty && (
             <button
@@ -658,13 +425,6 @@ export default function ChatPage() {
         }
       `}</style>
 
-      {showSchedule && (
-        <ScheduleModal
-          onClose={() => setShowSchedule(false)}
-          defaultTitle={scheduleTitle}
-          defaultDescription={scheduleDesc}
-        />
-      )}
     </div>
   );
 }

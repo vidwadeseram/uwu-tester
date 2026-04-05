@@ -26,6 +26,13 @@ interface Task {
   report?: string;
 }
 
+interface AgentStatus {
+  state: "idle" | "running" | "stopped" | "error";
+  current_task_id?: string | null;
+  message?: string;
+  updated_at?: string | null;
+}
+
 interface WorkspaceOption {
   name: string;
   path: string;
@@ -69,6 +76,13 @@ const STATUS_BG: Record<string, string> = {
   scheduled:    "rgba(168,85,247,0.1)",
   manual:       "rgba(249,115,22,0.1)",
   rate_limited: "rgba(251,146,60,0.1)",
+};
+
+const AGENT_STATE_COLOR: Record<string, string> = {
+  idle:    "#00ff88",
+  running: "#00d4ff",
+  stopped: "#4a5568",
+  error:   "#ff4444",
 };
 
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -179,11 +193,13 @@ function ReportModal({ task, onClose }: { task: Task; onClose: () => void }) {
 
 function TaskCard({
   task,
+  onEdit,
   onDelete,
   onViewReport,
   onQueueNow,
 }: {
   task: Task;
+  onEdit: () => void;
   onDelete: () => void;
   onViewReport: () => void;
   onQueueNow: () => void;
@@ -290,7 +306,7 @@ function TaskCard({
             View Report
           </button>
         )}
-        {["failed", "scheduled", "manual", "rate_limited"].includes(task.status) && (
+        {["failed", "scheduled", "manual", "completed", "rate_limited"].includes(task.status) && (
           <button
             onClick={onQueueNow}
             type="button"
@@ -302,6 +318,20 @@ function TaskCard({
             }}
           >
             {task.status === "manual" ? "Add to Queue" : task.status === "rate_limited" ? "Force Retry" : "Queue Now"}
+          </button>
+        )}
+        {!["running"].includes(task.status) && (
+          <button
+            onClick={onEdit}
+            type="button"
+            className="text-xs px-2.5 py-1 rounded transition-opacity hover:opacity-80"
+            style={{
+              background: "rgba(168,85,247,0.08)",
+              color: "#a855f7",
+              border: "1px solid rgba(168,85,247,0.2)",
+            }}
+          >
+            Edit
           </button>
         )}
         <button
@@ -343,7 +373,7 @@ function NewTaskForm({
   onCreated: () => void;
   onCancel: () => void;
 }) {
-  const [type, setType] = useState<"coding" | "research">("research");
+  const type = "coding" as const;
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [scheduleMode, setScheduleMode] = useState<"anytime" | "once" | "daily" | "weekly" | "manual">("anytime");
@@ -532,27 +562,6 @@ function NewTaskForm({
     >
       <div className="text-sm font-semibold" style={{ color: "#00ff88" }}>New Task</div>
 
-      {/* Type */}
-      <div className="flex gap-2">
-        {(["research", "coding"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setType(t)}
-            className="flex-1 py-2 rounded text-sm font-medium transition-all"
-            style={{
-              background: type === t
-                ? (t === "coding" ? "rgba(0,212,255,0.15)" : "rgba(168,85,247,0.15)")
-                : "rgba(30,45,74,0.3)",
-              color: type === t ? (t === "coding" ? "#00d4ff" : "#a855f7") : "#4a5568",
-              border: `1px solid ${type === t ? (t === "coding" ? "rgba(0,212,255,0.4)" : "rgba(168,85,247,0.4)") : "rgba(30,45,74,0.5)"}`,
-            }}
-          >
-            {t === "coding" ? "💻 Coding" : "🔬 Research"}
-          </button>
-        ))}
-      </div>
-
       <div className="flex flex-col gap-1">
         <label className="text-xs" htmlFor="schedule-mode" style={{ color: "#4a5568" }}>Schedule</label>
         <div id="schedule-mode" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
@@ -735,17 +744,11 @@ function NewTaskForm({
 
       {/* Description */}
       <div className="flex flex-col gap-1">
-        <label className="text-xs" htmlFor="description" style={{ color: "#4a5568" }}>
-          {type === "coding" ? "What should be done?" : "Research question / prompt"}
-        </label>
+        <label className="text-xs" htmlFor="description" style={{ color: "#4a5568" }}>What should be done?</label>
         <textarea
           id="description"
           style={{ ...INPUT, minHeight: "100px", resize: "vertical" }}
-          placeholder={
-            type === "coding"
-              ? "Describe the coding task in detail. The scheduler passes this prompt directly to opencode or claude code."
-              : "Ask a question, request research, or describe what you need to know."
-          }
+          placeholder="Describe the coding task in detail. The scheduler passes this prompt directly to opencode or claude code."
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
@@ -885,20 +888,28 @@ interface GitHubIssueForQueue {
 
 export default function SchedulerPage() {
   const [tasks, setTasks]         = useState<Task[]>([]);
+  const [agentStatus, setAgentStatus] = useState<AgentStatus>({ state: "stopped" });
   const [loading, setLoading]     = useState(true);
-  const [tab, setTab]             = useState<"active" | "completed">("active");
+  const [tab, setTab]             = useState<"active" | "all">("active");
   const [showForm, setShowForm]   = useState(false);
   const [report, setReport]       = useState<Task | null>(null);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [addingIssueId, setAddingIssueId] = useState<number | null>(null);
   const [addingMilestoneId, setAddingMilestoneId] = useState<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchTasks = useCallback(async () => {
+  const fetchAll = useCallback(async () => {
     try {
-      const res = await fetch("/api/scheduler/tasks");
-      if (res.ok) {
-        const data = await res.json();
-        setTasks(data.tasks ?? []);
+      const [tasksRes, statusRes] = await Promise.allSettled([
+        fetch("/api/scheduler/tasks"),
+        fetch("/api/openclaw/status"),
+      ]);
+      if (tasksRes.status === "fulfilled" && tasksRes.value.ok) {
+        const d = await tasksRes.value.json();
+        setTasks(d.tasks ?? []);
+      }
+      if (statusRes.status === "fulfilled" && statusRes.value.ok) {
+        setAgentStatus(await statusRes.value.json());
       }
     } finally {
       setLoading(false);
@@ -906,10 +917,10 @@ export default function SchedulerPage() {
   }, []);
 
   useEffect(() => {
-    fetchTasks();
-    timerRef.current = setInterval(fetchTasks, 5000);
+    fetchAll();
+    timerRef.current = setInterval(fetchAll, 5000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [fetchTasks]);
+  }, [fetchAll]);
 
   const handleAddIssueToQueue = useCallback(async (issue: GitHubIssueForQueue, _repoOwner: string, _repoName: string) => {
     setAddingIssueId(issue.id);
@@ -929,17 +940,16 @@ export default function SchedulerPage() {
         const data = await res.json();
         throw new Error(data.error || "Failed to create task");
       }
-      fetchTasks();
+      fetchAll();
     } catch (err) {
       console.error("Failed to add issue to queue:", err);
     } finally {
       setAddingIssueId(null);
     }
-  }, [fetchTasks]);
+  }, [fetchAll]);
 
   const handleAddMilestoneToQueue = useCallback(async (issues: GitHubIssueForQueue[], _repoOwner: string, _repoName: string) => {
     if (issues.length === 0) return;
-    const milestoneTitle = issues[0]?.milestone?.title ?? "No Milestone";
     setAddingMilestoneId(Date.now());
     try {
       const results = await Promise.allSettled(
@@ -965,17 +975,18 @@ export default function SchedulerPage() {
       if (failedCount > 0) {
         console.error(`Failed to create ${failedCount} tasks out of ${issues.length}`);
       }
-      fetchTasks();
+      fetchAll();
     } catch (err) {
       console.error("Failed to add milestone to queue:", err);
     } finally {
       setAddingMilestoneId(null);
     }
-  }, [fetchTasks]);
+  }, [fetchAll]);
 
   async function deleteTask(id: string) {
     await fetch(`/api/scheduler/tasks/${id}`, { method: "DELETE" });
-    fetchTasks();
+    if (editingTask?.id === id) setEditingTask(null);
+    fetchAll();
   }
 
   async function queueNowTask(id: string) {
@@ -984,16 +995,33 @@ export default function SchedulerPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "queue_now" }),
     });
-    fetchTasks();
+    fetchAll();
+  }
+
+  async function saveEdit(id: string, payload: Record<string, unknown>) {
+    const res = await fetch(`/api/scheduler/tasks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      throw new Error(d.error ?? "Failed to update task");
+    }
+    setEditingTask(null);
+    fetchAll();
   }
 
   const active    = tasks.filter((t) => ["pending", "running", "scheduled", "manual", "rate_limited"].includes(t.status));
-  const completed = tasks.filter((t) => ["completed", "failed"].includes(t.status));
+  const displayed = tab === "active" ? active : tasks;
 
   const pending  = active.filter((t) => t.status === "pending").length;
   const running  = active.filter((t) => t.status === "running").length;
   const sched    = active.filter((t) => t.status === "scheduled").length;
   const manual   = active.filter((t) => t.status === "manual").length;
+
+  const agentColor = AGENT_STATE_COLOR[agentStatus.state] ?? "#4a5568";
+  const currentTask = agentStatus.current_task_id ? tasks.find((t) => t.id === agentStatus.current_task_id) : null;
 
   return (
     <div className="max-w-screen-lg mx-auto px-4 py-6 space-y-6 fade-in">
@@ -1022,7 +1050,19 @@ export default function SchedulerPage() {
         </div>
 
         {/* Stats + new button */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-3">
+          {/* Agent status pill */}
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
+            style={{ background: `${agentColor}12`, border: `1px solid ${agentColor}35`, color: agentColor }}
+          >
+            {agentStatus.state === "running"
+              ? <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: agentColor }} />
+              : <span className="w-1.5 h-1.5 rounded-full" style={{ background: agentColor }} />}
+            <span className="font-medium uppercase tracking-wider">{agentStatus.state}</span>
+            {currentTask && <span className="truncate max-w-24 opacity-70">{currentTask.title}</span>}
+          </div>
+
           <div className="flex flex-wrap gap-2 text-xs">
             {running > 0 && (
               <span className="px-2 py-1 rounded" style={{ background: "rgba(0,212,255,0.1)", color: "#00d4ff", border: "1px solid rgba(0,212,255,0.2)" }}>
@@ -1046,7 +1086,7 @@ export default function SchedulerPage() {
             )}
           </div>
           <button
-            onClick={() => setShowForm((v) => !v)}
+            onClick={() => { setShowForm((v) => !v); setEditingTask(null); }}
             type="button"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-semibold transition-all"
             style={{
@@ -1063,7 +1103,7 @@ export default function SchedulerPage() {
       {/* New task form */}
       {showForm && (
         <NewTaskForm
-          onCreated={() => { setShowForm(false); fetchTasks(); }}
+          onCreated={() => { setShowForm(false); fetchAll(); }}
           onCancel={() => setShowForm(false)}
         />
       )}
@@ -1078,18 +1118,21 @@ export default function SchedulerPage() {
 
       {/* Tabs */}
       <div className="flex gap-1 border-b overflow-x-auto" style={{ borderColor: "#1e2d4a" }}>
-        {(["active", "completed"] as const).map((t) => (
+        {([
+          { key: "active", label: `Active (${active.length})` },
+          { key: "all", label: `All (${tasks.length})` },
+        ] as const).map((t) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={t.key}
+            onClick={() => setTab(t.key)}
             type="button"
             className="px-4 py-2 text-sm font-medium transition-colors relative"
             style={{
-              color: tab === t ? "#e2e8f0" : "#4a5568",
-              borderBottom: tab === t ? "2px solid #ffd700" : "2px solid transparent",
+              color: tab === t.key ? "#e2e8f0" : "#4a5568",
+              borderBottom: tab === t.key ? "2px solid #ffd700" : "2px solid transparent",
             }}
           >
-            {t === "active" ? `Active (${active.length})` : `Completed (${completed.length})`}
+            {t.label}
           </button>
         ))}
       </div>
@@ -1111,7 +1154,7 @@ export default function SchedulerPage() {
         </div>
       ) : (
         <div className="space-y-3 fade-in">
-          {(tab === "active" ? active : completed).length === 0 ? (
+          {displayed.length === 0 ? (
             <div
               className="card flex flex-col items-center justify-center py-16 gap-3"
               style={{ color: "#4a5568" }}
@@ -1124,17 +1167,18 @@ export default function SchedulerPage() {
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
               <div className="text-sm">
-                {tab === "active" ? "No active tasks — create one above" : "No completed tasks yet"}
+                {tab === "active" ? "No active tasks — create one above" : "No tasks yet"}
               </div>
             </div>
           ) : (
-            (tab === "active" ? active : completed)
+            displayed
               .slice()
               .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
               .map((task, i) => (
                 <div key={task.id} className="slide-up" style={{ "--i": i } as React.CSSProperties}>
                   <TaskCard
                     task={task}
+                    onEdit={() => { setShowForm(false); setEditingTask(editingTask?.id === task.id ? null : task); }}
                     onDelete={() => deleteTask(task.id)}
                     onViewReport={() => setReport(task)}
                     onQueueNow={() => queueNowTask(task.id)}
