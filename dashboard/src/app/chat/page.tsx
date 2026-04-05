@@ -23,10 +23,10 @@ function MarkdownText({ text }: { text: string }) {
             <pre
               key={i}
               className="rounded-lg p-3 my-2 overflow-x-auto text-xs leading-relaxed"
-              style={{ background: "rgba(0,0,0,0.4)", border: "1px solid #1e2d4a", color: "#e2e8f0" }}
+              style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)" }}
             >
               {lang && (
-                <div className="text-xs mb-2 font-mono" style={{ color: "#4a5568" }}>
+                <div className="text-xs mb-2 font-mono" style={{ color: "var(--dim)" }}>
                   {lang}
                 </div>
               )}
@@ -38,7 +38,7 @@ function MarkdownText({ text }: { text: string }) {
             <code
               key={i}
               className="px-1.5 py-0.5 rounded text-xs font-mono"
-              style={{ background: "rgba(0,0,0,0.4)", color: "#00d4ff", border: "1px solid #1e2d4a" }}
+              style={{ background: "var(--bg)", color: "var(--cyan)", border: "1px solid var(--border)" }}
             >
               {part.slice(1, -1)}
             </code>
@@ -79,8 +79,8 @@ function ChatBubble({ msg }: { msg: Message }) {
         className="max-w-[92%] sm:max-w-[80%] rounded-2xl px-3 sm:px-4 py-3 text-sm leading-relaxed"
         style={
           isUser
-            ? { background: "rgba(0,212,255,0.15)", border: "1px solid rgba(0,212,255,0.3)", color: "#e2e8f0", borderRadius: "18px 18px 4px 18px" }
-            : { background: "rgba(30,45,74,0.6)", border: "1px solid #1e2d4a", color: "#e2e8f0", borderRadius: "18px 18px 18px 4px" }
+            ? { background: "rgba(0,212,255,0.15)", border: "1px solid rgba(0,212,255,0.3)", color: "var(--text)", borderRadius: "18px 18px 4px 18px" }
+            : { background: "var(--card)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "18px 18px 18px 4px" }
         }
       >
         <MarkdownText text={msg.content} />
@@ -112,7 +112,7 @@ function TypingIndicator() {
       </div>
       <div
         className="rounded-2xl px-4 py-3 flex items-center gap-1"
-        style={{ background: "rgba(30,45,74,0.6)", border: "1px solid #1e2d4a", borderRadius: "18px 18px 18px 4px" }}
+        style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: "18px 18px 18px 4px" }}
       >
         {[0, 1, 2].map((i) => (
           <span
@@ -241,9 +241,9 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
   }
 
   const IS = {
-    background: "rgba(10,14,26,0.8)",
-    border: "1px solid rgba(30,45,74,0.8)",
-    color: "#e2e8f0",
+    background: "var(--bg)",
+    border: "1px solid var(--border)",
+    color: "var(--text)",
     borderRadius: "6px",
     padding: "8px 12px",
     fontSize: "0.8rem",
@@ -259,11 +259,11 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
     >
       <div
         className="w-full sm:max-w-lg max-h-[90vh] flex flex-col rounded-t-2xl sm:rounded-lg overflow-hidden"
-        style={{ background: "#0f1629", border: "1px solid #1e2d4a" }}
+        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "#1e2d4a" }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b flex-shrink-0" style={{ borderColor: "var(--border)" }}>
           <span className="font-semibold text-sm" style={{ color: "#ffd700" }}>Schedule as Task</span>
-          <button type="button" onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ background: "rgba(30,45,74,0.6)", color: "#94a3b8", border: "1px solid #1e2d4a" }}>✕</button>
+          <button type="button" onClick={onClose} className="text-xs px-2 py-1 rounded" style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--border)" }}>✕</button>
         </div>
         <div className="flex-1 overflow-auto p-5 space-y-4">
           {done ? (
@@ -275,9 +275,9 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
                   <button key={t} type="button" onClick={() => setType(t)}
                     className="flex-1 py-2 rounded text-xs font-medium"
                     style={{
-                      background: type === t ? (t === "coding" ? "rgba(0,212,255,0.15)" : "rgba(168,85,247,0.15)") : "rgba(30,45,74,0.3)",
-                      color: type === t ? (t === "coding" ? "#00d4ff" : "#a855f7") : "#4a5568",
-                      border: `1px solid ${type === t ? (t === "coding" ? "rgba(0,212,255,0.4)" : "rgba(168,85,247,0.4)") : "rgba(30,45,74,0.5)"}`,
+                      background: type === t ? (t === "coding" ? "rgba(0,212,255,0.15)" : "rgba(168,85,247,0.15)") : "var(--btn-bg)",
+                      color: type === t ? (t === "coding" ? "var(--cyan)" : "#a855f7") : "var(--dim)",
+                      border: `1px solid ${type === t ? (t === "coding" ? "rgba(0,212,255,0.4)" : "rgba(168,85,247,0.4)") : "var(--border)"}`,
                     }}
                   >{t === "coding" ? "💻 Coding" : "🔬 Research"}</button>
                 ))}
@@ -289,7 +289,7 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
                 <div className="space-y-3">
                   <div className="flex items-center gap-2">
                     <input type="checkbox" id="sched-use-wt" checked={useWorktree} onChange={(e) => setUseWorktree(e.target.checked)} />
-                    <label htmlFor="sched-use-wt" className="text-xs" style={{ color: "#94a3b8" }}>Use Worktree (isolated branch)</label>
+                    <label htmlFor="sched-use-wt" className="text-xs" style={{ color: "var(--dim)" }}>Use Worktree (isolated branch)</label>
                   </div>
 
                   {useWorktree ? (
@@ -301,7 +301,7 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
                       )}
                       <div className="flex items-center gap-2">
                         <input type="checkbox" id="sched-new-wt" checked={createNewWorktree} onChange={(e) => setCreateNewWorktree(e.target.checked)} />
-                        <label htmlFor="sched-new-wt" className="text-xs" style={{ color: "#94a3b8" }}>Create new worktree</label>
+                        <label htmlFor="sched-new-wt" className="text-xs" style={{ color: "var(--dim)" }}>Create new worktree</label>
                       </div>
                       {createNewWorktree ? (
                         <input style={IS} placeholder="Worktree name / branch" value={newWorktreeName} onChange={(e) => setNewWorktreeName(e.target.value)} />
@@ -341,7 +341,7 @@ function ScheduleModal({ onClose, defaultTitle, defaultDescription }: ScheduleMo
                     </span>
                   ) : "Queue Task"}
                 </button>
-                <button type="button" onClick={onClose} className="px-4 py-2 rounded text-sm" style={{ background: "rgba(30,45,74,0.4)", color: "#94a3b8", border: "1px solid rgba(30,45,74,0.7)" }}>Cancel</button>
+                <button type="button" onClick={onClose} className="px-4 py-2 rounded text-sm" style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--border)" }}>Cancel</button>
               </div>
             </>
           )}
@@ -454,11 +454,11 @@ export default function ChatPage() {
   const isEmpty = messages.length === 0;
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-[calc(100dvh-3.5rem)] fade-in" style={{ background: "#0a0e1a" }}>
+    <div className="flex flex-col h-[calc(100dvh-3.5rem)] min-h-[calc(100dvh-3.5rem)] fade-in" style={{ background: "var(--bg)" }}>
       {/* Header */}
       <div
         className="flex-shrink-0 px-3 sm:px-4 py-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b"
-        style={{ background: "rgba(10,14,26,0.95)", borderColor: "#1e2d4a" }}
+        style={{ background: "var(--card)", borderColor: "var(--border)" }}
       >
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 w-full sm:w-auto">
           <div
@@ -471,7 +471,7 @@ export default function ChatPage() {
           </div>
           <div>
             <div className="text-sm font-semibold" style={{ color: "#00ff88" }}>openclaw</div>
-            <div className="text-xs" style={{ color: "#4a5568" }}>AI assistant · VPS dev helper</div>
+            <div className="text-xs" style={{ color: "var(--dim)" }}>AI assistant · VPS dev helper</div>
           </div>
           <div className="flex items-center gap-1.5 ml-2">
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#00ff88", boxShadow: "0 0 6px #00ff88" }} />
@@ -502,9 +502,9 @@ export default function ChatPage() {
             <button
               onClick={clearChat}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors"
-              style={{ background: "rgba(30,45,74,0.5)", color: "#4a5568", border: "1px solid #1e2d4a" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#94a3b8")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#4a5568")}
+              style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--border)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
             >
               <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6M14 11v6" /><path d="M9 6V4h6v2" />
@@ -528,8 +528,8 @@ export default function ChatPage() {
                   <path d="M12 2a10 10 0 1 0 10 10" /><path d="M12 6v6l4 2" />
                 </svg>
               </div>
-              <h2 className="text-lg font-semibold mb-1" style={{ color: "#e2e8f0" }}>Chat with openclaw</h2>
-              <p className="text-sm" style={{ color: "#4a5568" }}>Ask anything about coding, servers, debugging, or VPS management.</p>
+              <h2 className="text-lg font-semibold mb-1" style={{ color: "var(--text)" }}>Chat with openclaw</h2>
+              <p className="text-sm" style={{ color: "var(--dim)" }}>Ask anything about coding, servers, debugging, or VPS management.</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-xl">
               {SUGGESTIONS.map((s) => (
@@ -537,16 +537,16 @@ export default function ChatPage() {
                   key={s}
                   onClick={() => sendMessage(s)}
                   className="text-left px-4 py-3 rounded-xl text-xs transition-all"
-                  style={{ background: "rgba(30,45,74,0.4)", border: "1px solid #1e2d4a", color: "#94a3b8" }}
+                  style={{ background: "var(--btn-bg)", border: "1px solid var(--border)", color: "var(--dim)" }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.borderColor = "#00ff8840";
-                    e.currentTarget.style.color = "#e2e8f0";
+                    e.currentTarget.style.color = "var(--text)";
                     e.currentTarget.style.background = "rgba(0,255,136,0.05)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = "#1e2d4a";
-                    e.currentTarget.style.color = "#94a3b8";
-                    e.currentTarget.style.background = "rgba(30,45,74,0.4)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                    e.currentTarget.style.color = "var(--dim)";
+                    e.currentTarget.style.background = "var(--btn-bg)";
                   }}
                 >
                   {s}
@@ -579,13 +579,13 @@ export default function ChatPage() {
       {/* Input */}
       <div
         className="flex-shrink-0 px-3 sm:px-4 py-3 border-t"
-        style={{ background: "rgba(10,14,26,0.95)", borderColor: "#1e2d4a" }}
+        style={{ background: "var(--card)", borderColor: "var(--border)" }}
       >
         <div className="max-w-3xl mx-auto">
           {error && !isEmpty && null}
           <div
             className="flex items-end gap-3 rounded-2xl px-4 py-3"
-            style={{ background: "rgba(30,45,74,0.5)", border: "1px solid #1e2d4a" }}
+            style={{ background: "var(--btn-bg)", border: "1px solid var(--border)" }}
           >
             <input
               ref={fileInputRef}
@@ -600,9 +600,9 @@ export default function ChatPage() {
               disabled={loading}
               title="Attach file (.txt, .csv, .xlsx)"
               className="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center transition-opacity disabled:opacity-40"
-              style={{ color: "#4a5568" }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = "#94a3b8")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#4a5568")}
+              style={{ color: "var(--dim)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -617,7 +617,7 @@ export default function ChatPage() {
               rows={1}
               className="flex-1 bg-transparent resize-none outline-none text-sm leading-relaxed"
               style={{
-                color: "#e2e8f0",
+                color: "var(--text)",
                 minHeight: "24px",
                 maxHeight: "160px",
                 overflowY: "auto",
@@ -635,8 +635,8 @@ export default function ChatPage() {
               disabled={!input.trim() || loading}
               className="flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all"
               style={{
-                background: input.trim() && !loading ? "linear-gradient(135deg,#00ff88,#00d4ff)" : "rgba(30,45,74,0.5)",
-                color: input.trim() && !loading ? "#0a0e1a" : "#4a5568",
+                background: input.trim() && !loading ? "linear-gradient(135deg,#00ff88,#00d4ff)" : "var(--btn-bg)",
+                color: input.trim() && !loading ? "#0a0e1a" : "var(--dim)",
               }}
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -644,9 +644,9 @@ export default function ChatPage() {
               </svg>
             </button>
           </div>
-          <p className="text-center text-xs mt-2" style={{ color: "#2d3748" }}>
+          <p className="text-center text-xs mt-2" style={{ color: "var(--dim)", opacity: 0.6 }}>
             openclaw uses OpenRouter · Anthropic · OpenAI — configure keys in{" "}
-            <a href="/settings" className="hover:underline" style={{ color: "#4a5568" }}>Settings</a>
+            <a href="/settings" className="hover:underline" style={{ color: "var(--dim)" }}>Settings</a>
           </p>
         </div>
       </div>

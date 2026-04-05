@@ -4,7 +4,7 @@ import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import AppLayout from "./components/AppLayout";
 
 export const metadata: Metadata = {
-  title: "uwu-code",
+  title: "uwucode",
   description: "Web-based development environment manager for VPS",
 };
 

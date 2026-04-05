@@ -156,7 +156,7 @@ export default function Navbar() {
     <>
       <nav
         className="fixed top-0 left-0 right-0 z-50 border-b"
-        style={{ background: "rgba(10,14,26,0.97)", borderColor: "#1e2d4a", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
+        style={{ background: "var(--card)", borderColor: "var(--border)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}
       >
         <div className="max-w-screen-2xl mx-auto px-3 sm:px-4 h-14 flex items-center justify-between gap-2 sm:gap-4">
 
@@ -184,12 +184,12 @@ export default function Navbar() {
                   title={link.label}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all"
                   style={{
-                    color: active ? link.color : "#4a5568",
+                    color: active ? link.color : "var(--dim)",
                     background: active ? `${link.color}12` : "transparent",
                     borderBottom: active ? `2px solid ${link.color}` : "2px solid transparent",
                   }}
                   onMouseEnter={(e) => { if (!active) e.currentTarget.style.color = link.color; }}
-                  onMouseLeave={(e) => { if (!active) e.currentTarget.style.color = "#4a5568"; }}
+                  onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLAnchorElement).style.color = "var(--dim)"; }}
                 >
                   {link.icon}
                   <span className="hidden lg:inline">{link.label}</span>
@@ -203,9 +203,9 @@ export default function Navbar() {
               title="Terminal (new tab)"
               onClick={() => window.open("/terminal/", "_blank", "noopener,noreferrer")}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium transition-all"
-              style={{ color: "#4a5568", borderBottom: "2px solid transparent" }}
+              style={{ color: "var(--dim)", borderBottom: "2px solid transparent" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#00ff88")}
-              onMouseLeave={(e) => (e.currentTarget.style.color = "#4a5568")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "var(--dim)")}
             >
               <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <title>Terminal</title>
@@ -223,20 +223,20 @@ export default function Navbar() {
           {/* Right: system info + clock */}
           <div className="flex items-center gap-1.5 sm:gap-2 flex-shrink-0 min-w-0">
             {systemInfo && (
-              <div className="hidden lg:flex items-center gap-2 text-xs" style={{ color: "#4a5568" }}>
+              <div className="hidden lg:flex items-center gap-2 text-xs" style={{ color: "var(--dim)" }}>
                 <div className="flex items-center gap-1.5">
                   <span className="w-1.5 h-1.5 rounded-full pulse-dot" style={{ background: "#00ff88" }} />
                   <span style={{ color: "#00ff88" }}>{systemInfo.hostname}</span>
                 </div>
-                <div className="px-2 py-0.5 rounded font-mono" style={{ background: "rgba(30,45,74,0.5)", color: "#00d4ff" }}>
+                <div className="px-2 py-0.5 rounded font-mono" style={{ background: "var(--btn-bg)", color: "var(--cyan)" }}>
                   {systemInfo.publicIp}
                 </div>
-                <div className="hidden xl:block px-2 py-0.5 rounded" style={{ background: "rgba(30,45,74,0.5)" }}>
+                <div className="hidden xl:block px-2 py-0.5 rounded" style={{ background: "var(--btn-bg)", color: "var(--dim)" }}>
                   ↑ {systemInfo.uptime}
                 </div>
               </div>
             )}
-            <div className="px-1.5 sm:px-2 py-0.5 rounded font-mono text-xs" style={{ background: "rgba(30,45,74,0.5)", color: "#ffd700", minWidth: "54px", textAlign: "center" }}>
+            <div className="px-1.5 sm:px-2 py-0.5 rounded font-mono text-xs" style={{ background: "var(--btn-bg)", color: "#ffd700", minWidth: "54px", textAlign: "center" }}>
               {currentTime}
             </div>
             <ThemeToggle />
@@ -246,7 +246,7 @@ export default function Navbar() {
               type="button"
               aria-label="Toggle mobile menu"
               className="md:hidden flex items-center justify-center w-8 h-8 rounded"
-              style={{ background: "rgba(30,45,74,0.5)", color: "#94a3b8" }}
+              style={{ background: "var(--btn-bg)", color: "var(--dim)" }}
               onClick={() => setMenuOpen((v) => !v)}
             >
               {menuOpen ? (
@@ -269,7 +269,7 @@ export default function Navbar() {
       {menuOpen && (
         <div
           className="fixed top-14 left-0 right-0 z-40 border-b py-2 max-h-[calc(100vh-3.5rem)] overflow-y-auto"
-          style={{ background: "rgba(10,14,26,0.98)", borderColor: "#1e2d4a", backdropFilter: "blur(16px)" }}
+          style={{ background: "var(--card)", borderColor: "var(--border)", backdropFilter: "blur(16px)" }}
         >
           {NAV.map((link) => {
             const active = isActive(link.href, link.exact);
@@ -278,7 +278,7 @@ export default function Navbar() {
                 key={link.href}
                 href={link.href}
                 className="flex items-center gap-3 px-5 py-3 text-sm font-medium transition-colors"
-                style={{ color: active ? link.color : "#94a3b8", background: active ? `${link.color}0a` : "transparent" }}
+                style={{ color: active ? link.color : "var(--dim)", background: active ? `${link.color}0a` : "transparent" }}
               >
                 {link.icon}
                 {link.label}
@@ -289,7 +289,7 @@ export default function Navbar() {
             type="button"
             onClick={() => window.open("/terminal/", "_blank", "noopener,noreferrer")}
             className="flex items-center gap-3 px-5 py-3 text-sm font-medium w-full text-left"
-            style={{ color: "#94a3b8" }}
+            style={{ color: "var(--dim)" }}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <title>Terminal</title>
