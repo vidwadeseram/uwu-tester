@@ -296,11 +296,13 @@ function MilestoneSection({ milestoneGroup, repoOwner, repoName, onAddToQueue, a
             onAddMilestoneToQueue(issues, repoOwner, repoName);
           }}
           disabled={isAddingMilestone}
-          className="w-full text-left px-3 py-1.5 text-xs transition-colors hover:bg-white/5 disabled:opacity-50"
+          className="w-full text-center px-3 py-1.5 text-xs transition-colors hover:opacity-80 disabled:opacity-50 rounded"
           style={{
-            background: "transparent",
+            background: "rgba(0,255,136,0.1)",
             color: "#00ff88",
             borderTop: "1px solid rgba(30,45,74,0.5)",
+            border: "1px solid rgba(0,255,136,0.25)",
+            cursor: isAddingMilestone ? "wait" : "pointer",
           }}
         >
           {isAddingMilestone ? (

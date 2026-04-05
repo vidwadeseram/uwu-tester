@@ -127,7 +127,7 @@ export default function TerminalPage() {
   };
 
   return (
-    <div className="flex flex-col fade-in" style={{ height: "100dvh", background: "#1e1e1e" }}>
+    <div className="flex flex-col fade-in -mt-14" style={{ height: "100dvh", background: "#1e1e1e" }}>
       <div className="flex flex-col gap-2 px-3 py-2 sm:flex-row sm:items-center sm:justify-between shrink-0" style={{ background: "var(--card)", borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-sm truncate" style={{ color: "var(--text)" }}>
