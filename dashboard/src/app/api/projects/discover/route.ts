@@ -92,21 +92,41 @@ export async function GET() {
       
       if (!isWithinProjectsRoot(projectPath)) continue;
       
-      const isGitRepo = fs.existsSync(path.join(projectPath, ".git"));
-      if (!isGitRepo) continue;
-      
-      const branch = getGitBranch(projectPath);
-      const remoteUrl = sanitizeRemoteUrl(getGitRemote(projectPath));
-      const defaultBranch = getGitDefaultBranch(projectPath);
-      
-      discovered.push({
-        path: projectPath,
-        name: entry.name,
-        gitUrl: remoteUrl || null,
-        branch,
-        defaultBranch,
-        isTracked: trackedPaths.has(projectPath),
-      });
+      if (fs.existsSync(path.join(projectPath, ".git"))) {
+        const branch = getGitBranch(projectPath);
+        const remoteUrl = sanitizeRemoteUrl(getGitRemote(projectPath));
+        const defaultBranch = getGitDefaultBranch(projectPath);
+        
+        discovered.push({
+          path: projectPath,
+          name: entry.name,
+          gitUrl: remoteUrl || null,
+          branch,
+          defaultBranch,
+          isTracked: trackedPaths.has(projectPath),
+        });
+      } else {
+        const subEntries = fs.readdirSync(projectPath, { withFileTypes: true });
+        for (const sub of subEntries) {
+          if (!sub.isDirectory()) continue;
+          const subPath = path.join(projectPath, sub.name);
+          if (!isWithinProjectsRoot(subPath)) continue;
+          if (!fs.existsSync(path.join(subPath, ".git"))) continue;
+          
+          const branch = getGitBranch(subPath);
+          const remoteUrl = sanitizeRemoteUrl(getGitRemote(subPath));
+          const defaultBranch = getGitDefaultBranch(subPath);
+          
+          discovered.push({
+            path: subPath,
+            name: sub.name,
+            gitUrl: remoteUrl || null,
+            branch,
+            defaultBranch,
+            isTracked: trackedPaths.has(subPath),
+          });
+        }
+      }
     }
     
     const tracked = discovered.filter(p => p.isTracked);

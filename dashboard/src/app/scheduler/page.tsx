@@ -882,6 +882,7 @@ interface BranchPrModalState {
   issue: GitHubIssueForQueue | null;
   milestone: { issues: GitHubIssueForQueue[]; title: string } | null;
   projectPath: string;
+  repoName: string;
 }
 
 function BranchPrModal({
@@ -1034,6 +1035,7 @@ export default function SchedulerPage() {
     issue: null,
     milestone: null,
     projectPath: "",
+    repoName: "",
   });
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -1061,29 +1063,30 @@ export default function SchedulerPage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [fetchAll]);
 
-  const handleAddIssueToQueue = useCallback((issue: GitHubIssueForQueue, _repoOwner: string, _repoName: string, projectPath: string) => {
+  const handleAddIssueToQueue = useCallback((issue: GitHubIssueForQueue, _repoOwner: string, repoName: string, projectPath: string) => {
     setBranchPrModal({
       open: true,
       issue,
       milestone: null,
       projectPath,
+      repoName,
     });
   }, []);
 
   const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean; tool: "opencode" | "claude" }) => {
     const { useBranchPr, tool } = opts;
-    const { issue, milestone, projectPath } = branchPrModal;
-    setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "" });
+    const { issue, milestone, projectPath, repoName } = branchPrModal;
+    setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "", repoName: "" });
 
     if (milestone && milestone.issues.length > 0) {
       setAddingMilestoneId(Date.now());
       try {
         const issuesList = milestone.issues.map(i => `- Issue #${i.number}: ${i.title}\n  ${i.html_url}`).join('\n');
-        let description = `Working on milestone "${milestone.title}".\n\nIssues to complete sequentially:\n${issuesList}`;
+        let description = `Working on milestone "${milestone.title}" in repository "${repoName}".\n\nWorking directory: ${projectPath}\n\nIssues to complete sequentially:\n${issuesList}`;
         if (useBranchPr) {
           description += `\n\nIMPORTANT: Create a new branch for this work. When all issues are resolved, open a pull request.`;
         }
-        const title = `${milestone.title} - ${milestone.issues.length} issues`;
+        const title = `${repoName}: ${milestone.title} - ${milestone.issues.length} issues`;
 
         const res = await fetch("/api/scheduler/tasks", {
           method: "POST",
@@ -1110,7 +1113,7 @@ export default function SchedulerPage() {
     } else if (issue) {
       setAddingIssueId(issue.id);
       try {
-        let description = `GitHub Issue #${issue.number}: ${issue.title}\n\n${issue.html_url}`;
+        let description = `GitHub Issue #${issue.number}: ${issue.title}\nRepository: ${repoName}\nWorking directory: ${projectPath}\n\n${issue.html_url}`;
         if (useBranchPr) {
           description += `\n\nIMPORTANT: Create a new branch for this work. When done, open a pull request.`;
         }
@@ -1119,7 +1122,7 @@ export default function SchedulerPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type: "coding",
-            title: issue.title,
+            title: `${repoName}: ${issue.title}`,
             description,
             workspace: projectPath,
             preferred_tool: tool,
@@ -1139,12 +1142,13 @@ export default function SchedulerPage() {
     }
   }, [branchPrModal, fetchAll]);
 
-  const handleAddMilestoneToQueue = useCallback((issues: GitHubIssueForQueue[], milestoneTitle: string, _repoOwner: string, _repoName: string, projectPath: string) => {
+  const handleAddMilestoneToQueue = useCallback((issues: GitHubIssueForQueue[], milestoneTitle: string, _repoOwner: string, repoName: string, projectPath: string) => {
     setBranchPrModal({
       open: true,
       issue: null,
       milestone: { issues, title: milestoneTitle },
       projectPath,
+      repoName,
     });
   }, []);
 
@@ -1362,7 +1366,7 @@ export default function SchedulerPage() {
         <BranchPrModal
           state={branchPrModal}
           onConfirm={handleBranchPrConfirm}
-          onCancel={() => setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "" })}
+          onCancel={() => setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "", repoName: "" })}
         />
       )}
     </div>
