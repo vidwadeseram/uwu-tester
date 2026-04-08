@@ -890,75 +890,115 @@ function BranchPrModal({
   onCancel,
 }: {
   state: BranchPrModalState;
-  onConfirm: (useBranchPr: boolean) => void;
+  onConfirm: (opts: { useBranchPr: boolean; tool: "opencode" | "claude" }) => void;
   onCancel: () => void;
 }) {
+  const [tool, setTool] = useState<"opencode" | "claude">("opencode");
+  const [useBranchPr, setUseBranchPr] = useState<boolean | null>(null);
+
+  const taskLabel = state.milestone
+    ? state.milestone.title
+    : state.issue
+      ? `#${state.issue.number} ${state.issue.title}`
+      : "task";
+
+  if (useBranchPr !== null) {
+    onConfirm({ useBranchPr, tool });
+    return null;
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)" }}
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
+      style={{ background: "rgba(0,0,0,0.6)" }}
     >
       <div
-        className="w-full max-w-md flex flex-col rounded-lg overflow-hidden"
-        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+        className="w-full max-w-sm flex flex-col rounded-lg overflow-hidden slide-up"
+        style={{ background: "var(--card)", border: "1px solid rgba(0,212,255,0.2)" }}
       >
-        <div className="px-5 py-4 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="text-sm font-semibold" style={{ color: "#ffd700" }}>
-            {state.milestone
-              ? `Queue milestone: ${state.milestone.title}`
-              : state.issue
-                ? `Queue: ${state.issue.title}`
-                : "Queue task"}
+        <div className="px-4 py-3" style={{ background: "rgba(0,212,255,0.06)", borderBottom: "1px solid var(--border)" }}>
+          <div className="text-sm font-semibold" style={{ color: "#00d4ff" }}>
+            Queue: {taskLabel}
           </div>
-          <div className="text-xs mt-1" style={{ color: "var(--dim)" }}>
-            Workspace: <span className="font-mono">{state.projectPath}</span>
+          <div className="text-xs mt-1 font-mono" style={{ color: "#4a5568" }}>
+            {state.projectPath}
           </div>
         </div>
 
-        <div className="px-5 py-4 space-y-3">
-          <div className="text-sm" style={{ color: "var(--text)" }}>
-            Should this task be done in a separate branch with a PR?
+        <div className="px-4 py-3 space-y-3">
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
+              Tool
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setTool("opencode")}
+                type="button"
+                className="flex-1 py-2 rounded text-sm font-semibold transition-all"
+                style={{
+                  background: tool === "opencode" ? "rgba(0,255,136,0.15)" : "var(--btn-bg)",
+                  color: tool === "opencode" ? "#00ff88" : "var(--dim)",
+                  border: `1px solid ${tool === "opencode" ? "rgba(0,255,136,0.4)" : "var(--input-border)"}`,
+                }}
+              >
+                OpenCode
+              </button>
+              <button
+                onClick={() => setTool("claude")}
+                type="button"
+                className="flex-1 py-2 rounded text-sm font-semibold transition-all"
+                style={{
+                  background: tool === "claude" ? "rgba(168,85,247,0.15)" : "var(--btn-bg)",
+                  color: tool === "claude" ? "#a855f7" : "var(--dim)",
+                  border: `1px solid ${tool === "claude" ? "rgba(168,85,247,0.4)" : "var(--input-border)"}`,
+                }}
+              >
+                Claude Code
+              </button>
+            </div>
           </div>
-          <div className="text-xs" style={{ color: "#4a5568" }}>
-            If yes, the agent will create a new branch, make changes, and open a pull request.
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
+              Branching
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setUseBranchPr(true)}
+                type="button"
+                className="flex-1 py-2 rounded text-xs font-semibold transition-all"
+                style={{
+                  background: "rgba(0,212,255,0.12)",
+                  color: "#00d4ff",
+                  border: "1px solid rgba(0,212,255,0.3)",
+                }}
+              >
+                Branch + PR
+              </button>
+              <button
+                onClick={() => setUseBranchPr(false)}
+                type="button"
+                className="flex-1 py-2 rounded text-xs font-semibold transition-all"
+                style={{
+                  background: "rgba(0,255,136,0.12)",
+                  color: "#00ff88",
+                  border: "1px solid rgba(0,255,136,0.3)",
+                }}
+              >
+                Direct commit
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-2 px-5 py-3 border-t" style={{ borderColor: "var(--border)" }}>
-          <button
-            onClick={() => onConfirm(true)}
-            type="button"
-            className="flex-1 py-2 rounded text-sm font-semibold transition-opacity"
-            style={{
-              background: "rgba(0,212,255,0.15)",
-              color: "#00d4ff",
-              border: "1px solid rgba(0,212,255,0.3)",
-            }}
-          >
-            Yes — Branch + PR
-          </button>
-          <button
-            onClick={() => onConfirm(false)}
-            type="button"
-            className="flex-1 py-2 rounded text-sm font-semibold transition-opacity"
-            style={{
-              background: "rgba(0,255,136,0.15)",
-              color: "#00ff88",
-              border: "1px solid rgba(0,255,136,0.3)",
-            }}
-          >
-            No — Direct commit
-          </button>
+        <div className="px-4 py-2 border-t flex justify-end" style={{ borderColor: "var(--border)" }}>
           <button
             onClick={onCancel}
             type="button"
-            className="px-4 py-2 rounded text-sm transition-opacity hover:opacity-70"
-            style={{ background: "var(--btn-bg)", color: "var(--dim)", border: "1px solid var(--input-border)" }}
+            className="px-3 py-1.5 rounded text-xs transition-opacity hover:opacity-70"
+            style={{ color: "#4a5568" }}
           >
             Cancel
           </button>
@@ -1030,7 +1070,8 @@ export default function SchedulerPage() {
     });
   }, []);
 
-  const handleBranchPrConfirm = useCallback(async (useBranchPr: boolean) => {
+  const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean; tool: "opencode" | "claude" }) => {
+    const { useBranchPr, tool } = opts;
     const { issue, milestone, projectPath } = branchPrModal;
     setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "" });
 
@@ -1052,6 +1093,7 @@ export default function SchedulerPage() {
             title,
             description,
             workspace: projectPath,
+            preferred_tool: tool,
             schedule_mode: "anytime",
           }),
         });
@@ -1080,6 +1122,7 @@ export default function SchedulerPage() {
             title: issue.title,
             description,
             workspace: projectPath,
+            preferred_tool: tool,
             schedule_mode: "anytime",
           }),
         });

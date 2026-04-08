@@ -5,6 +5,7 @@ import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
+import { createTmuxSession, sessions } from "@/lib/terminal-sessions";
 
 const DATA_DIR = path.join(process.cwd(), "..", "openclaw", "data");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
@@ -34,15 +35,26 @@ function buildPrompt(task: Task): string {
   );
 }
 
-function spawnTask(task: Task) {
+function spawnTask(task: Task): string {
   const prompt = buildPrompt(task);
-  const child = spawn(
-    "claude",
-    ["--dangerously-skip-permissions", "-p", prompt],
-    { cwd: REPO_ROOT, detached: true, stdio: "ignore" }
+  const workspace = task.workspace || "/opt/workspaces";
+
+  const tmuxSession = createTmuxSession(task.id, workspace);
+  sessions.set(task.id, tmuxSession);
+
+  const escapedPrompt = prompt.replace(/'/g, "'\\''");
+  const bin = task.preferred_tool === "claude" ? "claude" : "opencode";
+  const cmd = bin === "claude"
+    ? `claude --dangerously-skip-permissions -p '${escapedPrompt}'`
+    : `opencode -p '${escapedPrompt}'`;
+  
+  spawn(
+    "tmux",
+    ["send-keys", "-t", tmuxSession.tmuxSession, cmd, "Enter"],
+    { cwd: REPO_ROOT }
   );
-  child.unref();
-  return child.pid;
+
+  return task.id;
 }
 
 type TaskStatus = "pending" | "running" | "completed" | "failed" | "scheduled" | "manual" | "rate_limited";
@@ -71,6 +83,7 @@ export interface Task {
   last_run_status?: "completed" | "failed";
   retry_at?: string;
   report?: string;
+  session_id?: string;
 }
 
 function normalizeIso(value?: string): string | null {
@@ -230,10 +243,10 @@ export async function POST(req: NextRequest) {
   if (mode === "anytime") {
     task.status = "running";
     task.started_at = new Date().toISOString();
+    task.session_id = spawnTask(task);
     const tasks = loadTasks();
     tasks.push(task);
     saveTasks(tasks);
-    spawnTask(task);
     return NextResponse.json({ task }, { status: 201 });
   }
 

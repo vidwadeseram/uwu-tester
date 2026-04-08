@@ -13,15 +13,21 @@ function spawnTask(task: Record<string, unknown>) {
   const description = String(task.description || "");
   const id = String(task.id);
   const workspace = String(task.workspace || "/opt/workspaces");
+  const preferredTool = String(task.preferred_tool || "opencode");
 
   const prompt = task.type === "coding"
     ? `You are executing scheduled coding task "${title}".\n\nDescription: ${description}\nTarget workspace: ${workspace}\n\nUse your tools to complete this task fully.\n\nWhen done, call scheduler_update_task MCP: task_id="${id}", status="completed"/"failed", report=<summary>, completed_at=<ISO>, last_run_at=<ISO>, last_run_status="completed"/"failed".`
     : `You are executing scheduled research task "${title}".\n\nTask: ${description}\n\nResearch and answer this thoroughly.\n\nWhen done, call scheduler_update_task MCP: task_id="${id}", status="completed"/"failed", report=<findings>, completed_at=<ISO>, last_run_at=<ISO>, last_run_status="completed"/"failed".`;
 
+  const bin = preferredTool === "claude" ? "claude" : "opencode";
+  const args = bin === "claude"
+    ? ["--dangerously-skip-permissions", "-p", prompt]
+    : ["-p", prompt];
+
   const child = spawn(
-    "claude",
-    ["--dangerously-skip-permissions", "-p", prompt],
-    { cwd: REPO_ROOT, detached: true, stdio: "ignore" }
+    bin,
+    args,
+    { cwd: workspace, detached: true, stdio: "ignore" }
   );
   child.unref();
 }

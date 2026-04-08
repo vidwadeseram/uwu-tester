@@ -31,6 +31,7 @@ interface Task {
   type: "coding" | "research";
   description: string;
   workspace?: string;
+  preferred_tool?: "claude" | "opencode" | "auto";
   status: TaskStatus;
   schedule_mode?: string;
   schedule_time?: string;
@@ -123,13 +124,13 @@ function runTask(task: Task) {
   save(tasks);
 
   const workspace = task.workspace || REPO_ROOT;
-  const child = spawn(
-    "claude",
-    ["--dangerously-skip-permissions", "-p", prompt],
-    { cwd: workspace, detached: true, stdio: "ignore" }
-  );
+  const bin = task.preferred_tool === "claude" ? "claude" : "opencode";
+  const args = bin === "claude"
+    ? ["--dangerously-skip-permissions", "-p", prompt]
+    : ["-p", prompt];
+  const child = spawn(bin, args, { cwd: workspace, detached: true, stdio: "ignore" });
   child.unref();
-  console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) cwd=${workspace} pid=${child.pid}`);
+  console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) tool=${bin} cwd=${workspace} pid=${child.pid}`);
 }
 
 function tick() {
