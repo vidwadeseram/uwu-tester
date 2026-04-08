@@ -22,7 +22,7 @@ import {
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 
 // __dirname is the dashboard/ directory; tasks live in ../openclaw/data/
 const DATA_DIR = path.resolve(__dirname, "..", "openclaw", "data");
@@ -320,6 +320,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
           if (args[key] !== undefined) {
             (tasks[idx] as unknown as Record<string, unknown>)[key] = args[key];
           }
+        }
+
+        if (args.status === "completed" || args.status === "failed") {
+          const sessionName = `uwu-${String(args.task_id).slice(0, 8)}`;
+          try {
+            execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null || true`, { timeout: 5000 });
+          } catch { /* ignore */ }
         }
 
         saveTasks(tasks);

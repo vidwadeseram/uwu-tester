@@ -79,6 +79,13 @@ export async function PATCH(req: NextRequest, ctx: Context) {
     }
     delete next.action;
     tasks[idx] = next;
+
+    if (patch.status === "completed" || patch.status === "failed") {
+      const sessionName = `uwu-${id.slice(0, 8)}`;
+      try {
+        execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null || true`, { timeout: 5000 });
+      } catch { /* ignore */ }
+    }
   }
 
   save(tasks);

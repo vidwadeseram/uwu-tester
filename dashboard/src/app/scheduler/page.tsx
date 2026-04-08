@@ -294,7 +294,7 @@ function TaskCard({
       <div className="flex items-center gap-1.5 pt-1">
         {task.status === "running" && (
           <button
-            onClick={() => window.open(`/terminal/`, "_blank", "noopener,noreferrer")}
+            onClick={() => window.open(`/terminal/?arg=${encodeURIComponent(`tmux attach -t uwu-${task.id.slice(0, 8)}`)}`, "_blank", "noopener,noreferrer")}
             type="button"
             className="text-xs px-2.5 py-1 rounded transition-opacity hover:opacity-80 flex items-center gap-1"
             style={{

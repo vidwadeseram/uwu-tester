@@ -462,7 +462,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/workspaces
-ExecStart=$TTYD_BIN --port $TERMINAL_PORT --writable /bin/bash -l
+ExecStart=$TTYD_BIN --port $TERMINAL_PORT --writable --url-arg /bin/bash -l
 Restart=on-failure
 RestartSec=5
 
