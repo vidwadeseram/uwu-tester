@@ -122,14 +122,14 @@ function runTask(task: Task) {
 
   save(tasks);
 
-  // Spawn claude — the description is the prompt, nothing more.
+  const workspace = task.workspace || REPO_ROOT;
   const child = spawn(
     "claude",
     ["--dangerously-skip-permissions", "-p", prompt],
-    { cwd: REPO_ROOT, detached: true, stdio: "ignore" }
+    { cwd: workspace, detached: true, stdio: "ignore" }
   );
   child.unref();
-  console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) pid=${child.pid}`);
+  console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) cwd=${workspace} pid=${child.pid}`);
 }
 
 function tick() {
