@@ -25,7 +25,7 @@ A web-based VPS development dashboard with an autonomous AI task agent and real-
 
 ### OpenCode Server integration
 
-Coding tasks run through **OpenCode Server** (`opencode serve`) — an HTTP API that provides:
+Coding tasks run through **OpenCode Server** (`opencode serve`) with the [**uwu-agent**](https://github.com/uwutek/uwu-agent) plugin for multi-agent orchestration (Odin, Thor, Tyr, Mimir, Saga, Ratatoskr). The plugin provides:
 
 - **Live activity feed** — running task cards show tool calls, AI messages, file diffs in real time
 - **User intervention** — send messages to running sessions, abort tasks, approve permissions
@@ -64,7 +64,7 @@ What gets installed:
 | nginx | Reverse proxy + optional SSL |
 | tmux + neovim | Terminal tools |
 | openclaw agent | Autonomous AI task daemon |
-| OpenCode | AI coding tool — runs via `opencode serve` HTTP API |
+| OpenCode + uwu-agent | AI coding tool with multi-agent orchestration — runs via `opencode serve` HTTP API |
 | Dotfiles | Configs from `vidwadeseram/dotfiles` via stow |
 
 ### Systemd services
@@ -107,6 +107,17 @@ Scheduler UI  →  Dashboard API  →  OpenCode Server (opencode serve)
 ```
 
 OpenCode servers run as detached processes and survive dashboard restarts. The dashboard auto-reconnects on startup.
+
+### uwu-agent plugin
+
+[uwu-agent](https://github.com/uwutek/uwu-agent) is installed and configured automatically by the installer. It provides:
+
+- **Multi-agent orchestration** — Odin orchestrates Thor (deep work), Tyr (planning), Mimir (consultation), Saga (docs), Ratatoskr (exploration) in parallel
+- **`ultrawork` command** — one word to activate all agents
+- **Hash-anchored edits** — content hash validation prevents stale-line errors
+- **Built-in MCPs** — Exa (web search), Context7 (docs), Grep.app (GitHub search)
+
+Config lives in `opencode.json` (project) or `~/.config/opencode/uwu-agent.jsonc` (user overrides).
 
 ## Updating
 

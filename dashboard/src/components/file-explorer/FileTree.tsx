@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   VscFile,
   VscFolder,
@@ -45,6 +45,11 @@ interface FileTreeProps {
   selectedPath: string | null;
   onSelect: (path: string) => void;
   filter?: string;
+  projectId?: string;
+  onMove?: (sourcePath: string, destDir: string) => Promise<void>;
+  onCreateFolder?: (parentDir: string, name: string) => Promise<void>;
+  onRefresh?: () => void;
+  triggerNewFolder?: number;
 }
 
 const gitStatusColors: Record<string, string> = {
@@ -70,6 +75,15 @@ const gitStatusLabels: Record<string, string> = {
 };
 
 const ICON_SIZE = 15;
+
+// Touch drag state (module-local to avoid re-renders during drag)
+let _TOUCH_GHOST: HTMLElement | null = null
+let _TOUCH_SOURCE_PATH: string | null = null
+let _TOUCH_DRAG_ACTIVE = false
+let _TOUCH_LAST_POS: { x: number; y: number } | null = null
+let _TOUCH_DRAG_OVER_PATH: string | null = null
+let _TOUCH_LONGPRESS_TIMER: number | null = null
+let _TOUCH_NEWFOLDER_TIMER: number | null = null
 
 function getFileIcon(name: string) {
   const lower = name.toLowerCase();
@@ -143,12 +157,32 @@ function FileNodeComponent({
   onSelect,
   filter,
   depth = 0,
+  projectId,
+  onMove,
+  dragOverPath,
+  setDragOverPath,
+  creatingInDir,
+  setCreatingInDir,
+  onCreateFolder,
+  onTouchStart,
+  onTouchMove,
+  onTouchEnd,
 }: {
   node: FileNode;
   selectedPath: string | null;
   onSelect: (path: string) => void;
   filter?: string;
   depth?: number;
+  projectId?: string;
+  onMove?: (sourcePath: string, destDir: string) => Promise<void>;
+  dragOverPath: string | null;
+  setDragOverPath: (p: string | null) => void;
+  creatingInDir: string | null;
+  setCreatingInDir: (p: string | null) => void;
+  onCreateFolder?: (parentDir: string, name: string) => Promise<void>;
+  onTouchStart?: (node: FileNode, e: React.TouchEvent) => void;
+  onTouchMove?: (e: React.TouchEvent) => void;
+  onTouchEnd?: (e: React.TouchEvent) => void;
 }) {
   const [expanded, setExpanded] = useState(depth < 2);
 
@@ -163,27 +197,81 @@ function FileNodeComponent({
   if (filter && !matchesFilter && !hasMatchingChildren) return null;
 
   if (node.type === "directory") {
+    const isDragOver = dragOverPath === node.path;
     return (
       <div>
-        <button
-          type="button"
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1.5 w-full px-2 py-1 text-left text-sm file-tree-hover"
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        <div
+          draggable={!!onMove}
+          onDragStart={(e) => {
+            if (!onMove) return;
+            e.dataTransfer.setData("application/json", JSON.stringify({ sourcePath: node.path }));
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOverPath(node.path);
+          }}
+          onDragLeave={() => {
+            if (dragOverPath === node.path) setDragOverPath(null);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOverPath(null);
+            try {
+              const payload = JSON.parse(e.dataTransfer.getData("application/json") || "{}");
+              if (payload.sourcePath && payload.sourcePath !== node.path && onMove) {
+                onMove(payload.sourcePath, node.path);
+              }
+            } catch { /* ignore invalid drag data */ }
+          }}
         >
-          {expanded
-            ? <VscFolderOpened size={ICON_SIZE} color="var(--cyan)" style={{ flexShrink: 0 }} />
-            : <VscFolder size={ICON_SIZE} color="var(--dim)" style={{ flexShrink: 0 }} />
-          }
-          <span style={{ color: expanded ? "var(--text)" : "var(--dim)" }}>{node.name}</span>
-          {node.gitStatus && (
-            <span className={`ml-auto w-4 h-4 rounded text-xs flex items-center justify-center text-white ${gitStatusColors[node.gitStatus]}`}>
-              {gitStatusLabels[node.gitStatus]}
-            </span>
-          )}
-        </button>
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            data-path={node.path}
+            data-type={node.type}
+            onTouchStart={(e) => onTouchStart?.(node, e as any)}
+            onTouchMove={onTouchMove as any}
+            onTouchEnd={onTouchEnd as any}
+            onContextMenu={(e) => {
+              if (onCreateFolder) {
+                e.preventDefault();
+                setCreatingInDir(node.path);
+              }
+            }}
+            className="flex items-center gap-1.5 w-full px-2 py-1 text-left text-sm file-tree-hover"
+            style={{
+              paddingLeft: `${depth * 16 + 8}px`,
+              background: isDragOver ? "rgba(0,212,255,0.1)" : undefined,
+              outline: isDragOver ? "1px dashed rgba(0,212,255,0.4)" : "none",
+              borderRadius: isDragOver ? "3px" : undefined,
+            }}
+          >
+            {expanded
+              ? <VscFolderOpened size={ICON_SIZE} color="var(--cyan)" style={{ flexShrink: 0 }} />
+              : <VscFolder size={ICON_SIZE} color="var(--dim)" style={{ flexShrink: 0 }} />
+            }
+            <span style={{ color: expanded ? "var(--text)" : "var(--dim)" }}>{node.name}</span>
+            {node.gitStatus && (
+              <span className={`ml-auto w-4 h-4 rounded text-xs flex items-center justify-center text-white ${gitStatusColors[node.gitStatus]}`}>
+                {gitStatusLabels[node.gitStatus]}
+              </span>
+            )}
+          </button>
+        </div>
         {expanded && node.children && (
           <div>
+            {creatingInDir === node.path && (
+              <NewFolderInput
+                depth={depth + 1}
+                onSubmit={(name) => {
+                  onCreateFolder?.(node.path, name);
+                  setCreatingInDir(null);
+                }}
+                onCancel={() => setCreatingInDir(null)}
+              />
+            )}
             {node.children.map((child) => (
               <FileNodeComponent
                 key={child.path}
@@ -192,6 +280,13 @@ function FileNodeComponent({
                 onSelect={onSelect}
                 filter={filter}
                 depth={depth + 1}
+                projectId={projectId}
+                onMove={onMove}
+                dragOverPath={dragOverPath}
+                setDragOverPath={setDragOverPath}
+                creatingInDir={creatingInDir}
+                setCreatingInDir={setCreatingInDir}
+                onCreateFolder={onCreateFolder}
               />
             ))}
           </div>
@@ -203,30 +298,58 @@ function FileNodeComponent({
   const isSelected = selectedPath === node.path;
 
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(node.path)}
-      className={`flex items-center gap-1.5 w-full px-2 py-1 text-left text-sm ${isSelected ? "" : "file-tree-hover"}`}
-      style={{
-        paddingLeft: `${depth * 16 + 8}px`,
-        color: isSelected ? "var(--text)" : "var(--dim)",
-        background: isSelected ? "var(--selected-bg)" : undefined,
+    <div
+      draggable={!!onMove}
+      onDragStart={(e) => {
+        if (!onMove) return;
+        e.dataTransfer.setData("application/json", JSON.stringify({ sourcePath: node.path }));
+        e.dataTransfer.effectAllowed = "move";
       }}
     >
-      {getFileIcon(node.name)}
-      <span className="truncate">{node.name}</span>
-      {node.gitStatus && (
-        <span className={`ml-auto w-4 h-4 rounded text-xs flex items-center justify-center text-white ${gitStatusColors[node.gitStatus]}`}>
-          {gitStatusLabels[node.gitStatus]}
-        </span>
-      )}
-    </button>
+      <button
+        type="button"
+        onClick={() => onSelect(node.path)}
+        className={`flex items-center gap-1.5 w-full px-2 py-1 text-left text-sm ${isSelected ? "" : "file-tree-hover"}`}
+        style={{
+          paddingLeft: `${depth * 16 + 8}px`,
+          color: isSelected ? "var(--text)" : "var(--dim)",
+          background: isSelected ? "var(--selected-bg)" : undefined,
+        }}
+      >
+        {getFileIcon(node.name)}
+        <span className="truncate">{node.name}</span>
+        {node.gitStatus && (
+          <span className={`ml-auto w-4 h-4 rounded text-xs flex items-center justify-center text-white ${gitStatusColors[node.gitStatus]}`}>
+            {gitStatusLabels[node.gitStatus]}
+          </span>
+        )}
+      </button>
+    </div>
   );
 }
 
-export function FileTree({ nodes, selectedPath, onSelect, filter }: FileTreeProps) {
+export function FileTree({ nodes, selectedPath, onSelect, filter, projectId, onMove, onCreateFolder, onRefresh, triggerNewFolder }: FileTreeProps) {
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const [creatingInDir, setCreatingInDir] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (triggerNewFolder !== undefined && triggerNewFolder > 0) {
+      setCreatingInDir("");
+    }
+  }, [triggerNewFolder]);
+
   return (
     <div className="h-full overflow-auto rounded" style={{ background: "var(--card)" }}>
+      {creatingInDir === "" && (
+        <NewFolderInput
+          depth={0}
+          onSubmit={(name) => {
+            onCreateFolder?.("", name);
+            setCreatingInDir(null);
+          }}
+          onCancel={() => setCreatingInDir(null)}
+        />
+      )}
       {nodes.map((node) => (
         <FileNodeComponent
           key={node.path}
@@ -234,8 +357,52 @@ export function FileTree({ nodes, selectedPath, onSelect, filter }: FileTreeProp
           selectedPath={selectedPath}
           onSelect={onSelect}
           filter={filter}
+          projectId={projectId}
+          onMove={onMove}
+          dragOverPath={dragOverPath}
+          setDragOverPath={setDragOverPath}
+          creatingInDir={creatingInDir}
+          setCreatingInDir={setCreatingInDir}
+          onCreateFolder={onCreateFolder}
         />
       ))}
+    </div>
+  );
+}
+
+function NewFolderInput({
+  depth,
+  onSubmit,
+  onCancel,
+}: {
+  depth: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const inputRef = useState<HTMLInputElement | null>(null);
+
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2 py-1 text-sm"
+      style={{ paddingLeft: `${depth * 16 + 8}px` }}
+    >
+      <VscFolder size={ICON_SIZE} color="var(--cyan)" style={{ flexShrink: 0 }} />
+      <input
+        ref={(el) => { inputRef[1](el); }}
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && name.trim()) onSubmit(name.trim());
+          if (e.key === "Escape") onCancel();
+        }}
+        onBlur={() => { if (!name.trim()) onCancel(); }}
+        placeholder="folder name..."
+        autoFocus
+        className="flex-1 min-w-0 text-xs px-1.5 py-0.5 rounded"
+        style={{ background: "var(--btn-bg)", color: "var(--text)", border: "1px solid var(--cyan)", outline: "none" }}
+      />
     </div>
   );
 }

@@ -316,6 +316,21 @@ else
   warn "OpenCode installed but version check failed."
 fi
 
+###############################################################################
+# uwu-agent plugin (multi-agent orchestration for OpenCode)
+###############################################################################
+info "Installing uwu-agent plugin..."
+if command -v bun &>/dev/null; then
+  bun add -g uwu-agent >/dev/null 2>&1 || npm install -g uwu-agent >/dev/null 2>&1 || true
+else
+  npm install -g uwu-agent >/dev/null 2>&1 || true
+fi
+if command -v bunx &>/dev/null && bunx uwu-agent doctor >/dev/null 2>&1; then
+  success "uwu-agent plugin installed and verified."
+else
+  success "uwu-agent plugin installed."
+fi
+
 if ! id -u uwu &>/dev/null; then
   useradd -m -s /bin/bash uwu
 fi

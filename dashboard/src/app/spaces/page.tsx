@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 
 interface Project {
   id: string;
@@ -19,6 +19,13 @@ interface Space {
   projects: Project[];
   createdAt: string;
   updatedAt: string;
+}
+
+interface FileNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  children?: FileNode[];
 }
 
 const COLORS = ["#00ff88", "#ff6b6b", "#4ecdc4", "#ffe66d", "#a855f7", "#3b82f6", "#f97316", "#ec4899"];
@@ -208,7 +215,6 @@ export default function SpacesPage() {
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-6 fade-in">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div
@@ -238,7 +244,6 @@ export default function SpacesPage() {
         </button>
       </div>
 
-      {/* New space form */}
       {showNewSpace && (
         <div className="card p-4 space-y-3" style={{ border: "1px solid rgba(99,102,241,0.3)" }}>
           <div className="text-sm font-semibold" style={{ color: "#6366f1" }}>New Space</div>
@@ -295,7 +300,6 @@ export default function SpacesPage() {
         </div>
       )}
 
-      {/* Spaces grid */}
       {spaces.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-20 gap-3" style={{ color: "#4a5568" }}>
           <svg className="w-12 h-12 opacity-40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -356,7 +360,6 @@ export default function SpacesPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Space header */}
                     <div className="flex items-center justify-between px-4 py-3">
                       <div className="flex items-center gap-2 min-w-0">
                         <span
@@ -378,9 +381,7 @@ export default function SpacesPage() {
                       </div>
                     </div>
 
-                    {/* Projects + folders */}
                     <div className="px-4 pb-3 space-y-3 flex-1">
-                      {/* Folders */}
                       {folders.map((folder) => {
                         const folderProjects = getInFolder(space, folder);
                         return (
@@ -413,7 +414,6 @@ export default function SpacesPage() {
                         );
                       })}
 
-                      {/* Ungrouped projects */}
                       {ungrouped.length > 0 && (
                         <div className="space-y-1">
                           {folders.length > 0 && (
@@ -436,7 +436,6 @@ export default function SpacesPage() {
                         <div className="text-xs py-2 text-center" style={{ color: "#2e4a7a" }}>No repos yet</div>
                       )}
 
-                      {/* Add project form */}
                       {isAdding ? (
                         <div className="rounded p-3 space-y-2" style={{ background: "var(--hover-bg)", border: "1px solid var(--surface)" }}>
                           <select
@@ -502,6 +501,114 @@ export default function SpacesPage() {
   );
 }
 
+const FOLDER_ICON = (
+  <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
+const FILE_ICON = (
+  <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+  </svg>
+);
+
+function TreeNode({
+  node,
+  depth,
+  projectId,
+  onMoved,
+  dragOverPath,
+  setDragOverPath,
+}: {
+  node: FileNode;
+  depth: number;
+  projectId: string;
+  onMoved: () => void;
+  dragOverPath: string | null;
+  setDragOverPath: (p: string | null) => void;
+}) {
+  const [expanded, setExpanded] = useState(depth < 1);
+  const isDir = node.type === "directory";
+
+  return (
+    <div>
+      <div
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData("application/json", JSON.stringify({
+            sourceProjectId: projectId,
+            sourcePath: node.path,
+          }));
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(e) => {
+          if (isDir) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOverPath(node.path);
+          }
+        }}
+        onDragLeave={() => {
+          if (dragOverPath === node.path) setDragOverPath(null);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOverPath(null);
+          if (!isDir) return;
+          try {
+            const payload = JSON.parse(e.dataTransfer.getData("application/json") || "{}");
+            if (!payload.sourcePath || payload.sourcePath === node.path) return;
+            fetch("/api/files/move", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projectId: payload.sourceProjectId || projectId,
+                sourcePath: payload.sourcePath,
+                destinationDir: node.path,
+              }),
+            }).then((res) => res.json()).then((resp) => {
+              if (resp?.success) onMoved();
+            });
+          } catch { /* ignore invalid drag data */ }
+        }}
+        className="flex items-center gap-1.5 px-1 py-0.5 rounded text-xs cursor-pointer transition-colors"
+        style={{
+          paddingLeft: `${depth * 14 + 4}px`,
+          color: dragOverPath === node.path ? "#00d4ff" : "var(--dim)",
+          background: dragOverPath === node.path ? "rgba(0,212,255,0.08)" : "transparent",
+          outline: dragOverPath === node.path ? "1px dashed rgba(0,212,255,0.3)" : "none",
+        }}
+        onClick={() => isDir && setExpanded(!expanded)}
+      >
+        {isDir ? (
+          <svg className="w-2.5 h-2.5 flex-shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        ) : (
+          <span className="w-2.5 flex-shrink-0" />
+        )}
+        <span style={{ color: isDir ? "var(--dim)" : "var(--dim)" }}>
+          {isDir ? FOLDER_ICON : FILE_ICON}
+        </span>
+        <span className="truncate">{node.name}</span>
+      </div>
+      {isDir && expanded && node.children && node.children.map((child) => (
+        <TreeNode
+          key={child.path}
+          node={child}
+          depth={depth + 1}
+          projectId={projectId}
+          onMoved={onMoved}
+          dragOverPath={dragOverPath}
+          setDragOverPath={setDragOverPath}
+        />
+      ))}
+    </div>
+  );
+}
+
 function ProjectRow({
   project,
   space,
@@ -517,62 +624,129 @@ function ProjectRow({
 }) {
   const [showMove, setShowMove] = useState(false);
   const [newFolder, setNewFolder] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [tree, setTree] = useState<FileNode[] | null>(null);
+  const [loadingTree, setLoadingTree] = useState(false);
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const loadTreeRef = useRef<(projectId: string) => void>(() => {});
+
+  loadTreeRef.current = (pid: string) => {
+    setLoadingTree(true);
+    fetch(`/api/files/tree?projectId=${pid}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setTree(data.tree ?? []);
+        setLoadingTree(false);
+      })
+      .catch(() => setLoadingTree(false));
+  };
+
+  useEffect(() => {
+    if (expanded && tree === null) {
+      loadTreeRef.current(project.id);
+    }
+  }, [expanded, tree, project.id]);
+
+  const handleMoved = useCallback(() => {
+    loadTreeRef.current(project.id);
+  }, [project.id]);
 
   return (
-    <div className="flex items-center justify-between px-2 py-1.5 gap-2 group" style={{ background: "var(--hover-bg)" }}>
-      <div className="flex items-center gap-2 min-w-0">
-        <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          <polyline points="9 22 9 12 15 12 15 22" />
-        </svg>
-        <span className="text-xs truncate" style={{ color: "var(--text)" }}>{project.name}</span>
+    <div style={{ background: "var(--hover-bg)" }}>
+      <div className="flex items-center justify-between px-2 py-1.5 gap-2 group">
+        <div className="flex items-center gap-2 min-w-0">
+          <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="#4a5568" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <polyline points="9 22 9 12 15 12 15 22" />
+          </svg>
+          <span className="text-xs truncate" style={{ color: "var(--text)" }}>{project.name}</span>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          {showMove ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={newFolder}
+                onChange={(e) => setNewFolder(e.target.value)}
+                placeholder="Folder or blank"
+                list={`move-folders-${project.id}`}
+                className="text-xs px-1.5 py-0.5 rounded w-24"
+                style={{ background: "var(--surface)", border: "1px solid var(--input-border)", color: "var(--text)", outline: "none" }}
+              />
+              <datalist id={`move-folders-${project.id}`}>
+                {folders.filter((f) => f !== project.folderName).map((f) => <option key={f} value={f} />)}
+              </datalist>
+              <button
+                type="button"
+                onClick={() => { onMoveToFolder(newFolder.trim() || null); setShowMove(false); }}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ background: "rgba(0,255,136,0.12)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)" }}
+              >✓</button>
+              <button type="button" onClick={() => setShowMove(false)} className="text-xs" style={{ color: "#4a5568" }}>✕</button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => { setShowMove(true); setNewFolder(project.folderName || ""); }}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ color: "#4a5568" }}
+                title="Move to folder"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="text-xs px-1.5 py-0.5 rounded"
+                style={{ color: expanded ? space.color : "#4a5568" }}
+                title={expanded ? "Hide files" : "Show files"}
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={onRemove}
+                className="text-xs"
+                style={{ color: "#4a5568" }}
+                title="Remove"
+              >×</button>
+            </>
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        {showMove ? (
-          <div className="flex items-center gap-1">
-            <input
-              type="text"
-              value={newFolder}
-              onChange={(e) => setNewFolder(e.target.value)}
-              placeholder="Folder or blank"
-              list={`move-folders-${project.id}`}
-              className="text-xs px-1.5 py-0.5 rounded w-24"
-              style={{ background: "var(--surface)", border: "1px solid var(--input-border)", color: "var(--text)", outline: "none" }}
-            />
-            <datalist id={`move-folders-${project.id}`}>
-              {folders.filter((f) => f !== project.folderName).map((f) => <option key={f} value={f} />)}
-            </datalist>
-            <button
-              type="button"
-              onClick={() => { onMoveToFolder(newFolder.trim() || null); setShowMove(false); }}
-              className="text-xs px-1.5 py-0.5 rounded"
-              style={{ background: "rgba(0,255,136,0.12)", color: "#00ff88", border: "1px solid rgba(0,255,136,0.25)" }}
-            >✓</button>
-            <button type="button" onClick={() => setShowMove(false)} className="text-xs" style={{ color: "#4a5568" }}>✕</button>
-          </div>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => { setShowMove(true); setNewFolder(project.folderName || ""); }}
-              className="text-xs px-1.5 py-0.5 rounded"
-              style={{ color: "#4a5568" }}
-              title="Move to folder"
-            >
-              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-            </button>
-            <button
-              type="button"
-              onClick={onRemove}
-              className="text-xs"
-              style={{ color: "#4a5568" }}
-              title="Remove"
-            >×</button>
-          </>
-        )}
-      </div>
+      {expanded && (
+        <div className="px-2 pb-2" style={{ borderTop: "1px solid var(--surface)" }}>
+          {loadingTree && tree === null ? (
+            <div className="flex flex-col gap-1.5 py-2 px-1">
+              {[70, 55, 80, 45, 65].map((w, i) => (
+                <div key={i} className="skeleton h-2.5" style={{ width: `${w}%`, animationDelay: `${i * 0.06}s` }} />
+              ))}
+            </div>
+          ) : tree && tree.length > 0 ? (
+            <div className="py-1 max-h-64 overflow-y-auto">
+              {tree.map((node) => (
+                <TreeNode
+                  key={node.path}
+                  node={node}
+                  depth={0}
+                  projectId={project.id}
+                  onMoved={handleMoved}
+                  dragOverPath={dragOverPath}
+                  setDragOverPath={setDragOverPath}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs py-2 text-center" style={{ color: "#4a5568" }}>No files found</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

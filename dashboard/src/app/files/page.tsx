@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { FileTree, FileNode } from "@/components/file-explorer/FileTree";
 import { DiffViewer } from "@/components/file-explorer/DiffViewer";
+import { VscNewFolder } from "react-icons/vsc";
 
 const MonacoEditor = dynamic(() => import("@/components/file-explorer/MonacoEditor"), { ssr: false });
 
@@ -33,6 +34,7 @@ export default function FilesPage() {
   const [diffMode, setDiffMode] = useState<"inline" | "side-by-side">("inline");
   const [error, setError] = useState<string | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(true);
+  const [newFolderTrigger, setNewFolderTrigger] = useState(0);
 
   const [isMobile, setIsMobile] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -166,6 +168,47 @@ export default function FilesPage() {
     }
   }, []);
 
+  const handleMove = useCallback(async (sourcePath: string, destDir: string) => {
+    if (!selectedProjectId) return;
+    try {
+      const res = await fetch("/api/files/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: selectedProjectId, sourcePath, destinationDir: destDir }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadTree(selectedProjectId);
+      } else {
+        setError(data.error || "Failed to move file");
+      }
+    } catch (err) {
+      setError("Failed to move file");
+      console.error(err);
+    }
+  }, [selectedProjectId, loadTree]);
+
+  const handleCreateFolder = useCallback(async (parentDir: string, name: string) => {
+    if (!selectedProjectId || !name) return;
+    const dirPath = parentDir ? `${parentDir}/${name}` : name;
+    try {
+      const res = await fetch("/api/files/mkdir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: selectedProjectId, dirPath }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadTree(selectedProjectId);
+      } else {
+        setError(data.error || "Failed to create folder");
+      }
+    } catch (err) {
+      setError("Failed to create folder");
+      console.error(err);
+    }
+  }, [selectedProjectId, loadTree]);
+
   useEffect(() => {
     if (selectedProjectId) {
       loadTree(selectedProjectId);
@@ -254,6 +297,18 @@ export default function FilesPage() {
           className="px-3 py-1.5 rounded text-sm flex-1 min-w-0 max-w-xs"
           style={{ background: "var(--btn-bg)", color: "var(--text)", border: "1px solid var(--border)" }}
         />
+        {selectedProjectId && (
+          <button
+            type="button"
+            onClick={() => setNewFolderTrigger((n) => n + 1)}
+            className="flex items-center gap-1 px-3 py-1.5 rounded text-sm flex-none"
+            style={{ background: "var(--btn-bg)", color: "var(--text)", border: "1px solid var(--border)" }}
+            title="New Folder"
+          >
+            <VscNewFolder size={14} />
+            <span className="hidden sm:inline">New Folder</span>
+          </button>
+        )}
         {selectedPath && (
           <>
             <button
@@ -335,7 +390,17 @@ export default function FilesPage() {
               ) : tree.length === 0 ? (
                 <div style={{ color: "var(--dim)" }}>No files found</div>
               ) : (
-                <FileTree nodes={tree} selectedPath={selectedPath} onSelect={handleSelect} filter={filter} />
+                <FileTree
+                  nodes={tree}
+                  selectedPath={selectedPath}
+                  onSelect={handleSelect}
+                  filter={filter}
+                  projectId={selectedProjectId}
+                  onMove={handleMove}
+                  onCreateFolder={handleCreateFolder}
+                  onRefresh={() => loadTree(selectedProjectId)}
+                  triggerNewFolder={newFolderTrigger}
+                />
               )}
             </div>
           </div>

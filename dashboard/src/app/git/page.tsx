@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { GitDiffViewer } from "@/components/git/GitDiffViewer";
 
 interface GitFile {
   path: string;
@@ -76,6 +77,13 @@ export default function GitPage() {
   const [showNewWorktree, setShowNewWorktree] = useState(false);
   const [newWorktreeName, setNewWorktreeName] = useState("");
   const [newWorktreeBranch, setNewWorktreeBranch] = useState("");
+  const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
+  const [diffStaged, setDiffStaged] = useState(false);
+  const [diffContent, setDiffContent] = useState<string>("");
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [commitDiffHash, setCommitDiffHash] = useState<string | null>(null);
+  const [commitDiffContent, setCommitDiffContent] = useState<string>("");
+  const [commitDiffLoading, setCommitDiffLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/projects")
@@ -385,6 +393,49 @@ export default function GitPage() {
     }
   };
 
+  const loadFileDiff = useCallback(async (filePath: string, staged: boolean) => {
+    if (!selectedProjectId) return;
+    if (diffFilePath === filePath && diffStaged === staged) {
+      setDiffFilePath(null);
+      setDiffContent("");
+      return;
+    }
+    setDiffFilePath(filePath);
+    setDiffStaged(staged);
+    setDiffLoading(true);
+    try {
+      const res = await fetch(`/api/git/diff?projectId=${selectedProjectId}&path=${encodeURIComponent(filePath)}&staged=${staged}`);
+      const data = await res.json();
+      setDiffContent(data.diff || "");
+    } catch (err) {
+      console.error(err);
+      setDiffContent("");
+    } finally {
+      setDiffLoading(false);
+    }
+  }, [selectedProjectId, diffFilePath, diffStaged]);
+
+  const loadCommitDiff = useCallback(async (hash: string) => {
+    if (!selectedProjectId) return;
+    if (commitDiffHash === hash) {
+      setCommitDiffHash(null);
+      setCommitDiffContent("");
+      return;
+    }
+    setCommitDiffHash(hash);
+    setCommitDiffLoading(true);
+    try {
+      const res = await fetch(`/api/git/diff?projectId=${selectedProjectId}&commit=${hash}`);
+      const data = await res.json();
+      setCommitDiffContent(data.diff || "");
+    } catch (err) {
+      console.error(err);
+      setCommitDiffContent("");
+    } finally {
+      setCommitDiffLoading(false);
+    }
+  }, [selectedProjectId, commitDiffHash]);
+
   const stagedFiles = status?.files.filter((f) => f.staged) || [];
   const unstagedFiles = status?.files.filter((f) => !f.staged) || [];
 
@@ -632,32 +683,50 @@ export default function GitPage() {
                         Unstage All
                       </button>
                     </div>
-                    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                    <div style={{ borderColor: "var(--border)" }}>
                       {stagedFiles.map((file) => {
                         const cfg = STATUS_CONFIG[file.status] || STATUS_CONFIG.unknown;
+                        const isViewingDiff = diffFilePath === file.path && diffStaged === true;
                         return (
-                          <div
-                            key={file.path}
-                            className="flex items-center gap-3 px-4 py-2 group"
-                            style={{ borderBottom: "1px solid var(--border)" }}
-                          >
-                            <span
-                              className="badge text-xs font-mono"
-                              style={{ background: cfg.bg, color: cfg.color }}
-                            >
-                              {cfg.label}
-                            </span>
-                            <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
-                              {file.path}
-                            </span>
+                          <div key={file.path}>
                             <button
                               type="button"
-                              onClick={() => handleUnstage([file.path])}
-                              className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
-                              style={{ color: "var(--dim)" }}
+                              className="flex items-center gap-3 px-4 py-2 group cursor-pointer w-full text-left"
+                              style={{ borderBottom: "1px solid var(--border)", background: isViewingDiff ? "var(--selected-bg)" : "transparent" }}
+                              onClick={() => loadFileDiff(file.path, true)}
                             >
-                              Unstage
+                              <span
+                                className="badge text-xs font-mono"
+                                style={{ background: cfg.bg, color: cfg.color }}
+                              >
+                                {cfg.label}
+                              </span>
+                              <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
+                                {file.path}
+                              </span>
+                              <span className="text-xs opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--cyan)" }}>
+                                {isViewingDiff ? "✕" : "Diff"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleUnstage([file.path]); }}
+                                className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
+                                style={{ color: "var(--dim)" }}
+                              >
+                                Unstage
+                              </button>
                             </button>
+                            {isViewingDiff && (
+                              <div style={{ borderBottom: "1px solid var(--border)" }} className="px-2 py-2">
+                                {diffLoading ? (
+                                  <div className="flex items-center justify-center py-4">
+                                    <span className="spinner w-4 h-4" style={{ border: "2px solid rgba(0,212,255,0.2)", borderTopColor: "var(--cyan)" }} />
+                                  </div>
+                                ) : (
+                                  <GitDiffViewer diff={diffContent} emptyMessage="No staged changes for this file" />
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -693,32 +762,50 @@ export default function GitPage() {
                         Stage All
                       </button>
                     </div>
-                    <div className="divide-y" style={{ borderColor: "var(--border)" }}>
+                    <div style={{ borderColor: "var(--border)" }}>
                       {unstagedFiles.map((file) => {
                         const cfg = STATUS_CONFIG[file.status] || STATUS_CONFIG.unknown;
+                        const isViewingDiff = diffFilePath === file.path && diffStaged === false;
                         return (
-                          <div
-                            key={file.path}
-                            className="flex items-center gap-3 px-4 py-2 group"
-                            style={{ borderBottom: "1px solid var(--border)" }}
-                          >
-                            <span
-                              className="badge text-xs font-mono"
-                              style={{ background: cfg.bg, color: cfg.color }}
-                            >
-                              {cfg.label}
-                            </span>
-                            <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
-                              {file.path}
-                            </span>
+                          <div key={file.path}>
                             <button
                               type="button"
-                              onClick={() => handleStage([file.path])}
-                              className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
-                              style={{ color: "var(--dim)" }}
+                              className="flex items-center gap-3 px-4 py-2 group cursor-pointer w-full text-left"
+                              style={{ borderBottom: "1px solid var(--border)", background: isViewingDiff ? "var(--selected-bg)" : "transparent" }}
+                              onClick={() => loadFileDiff(file.path, false)}
                             >
-                              Stage
+                              <span
+                                className="badge text-xs font-mono"
+                                style={{ background: cfg.bg, color: cfg.color }}
+                              >
+                                {cfg.label}
+                              </span>
+                              <span className="flex-1 text-sm font-mono truncate" style={{ color: "var(--text)" }}>
+                                {file.path}
+                              </span>
+                              <span className="text-xs opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--cyan)" }}>
+                                {isViewingDiff ? "✕" : "Diff"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleStage([file.path]); }}
+                                className="opacity-0 group-hover:opacity-100 text-xs px-2 py-1 rounded transition-opacity"
+                                style={{ color: "var(--dim)" }}
+                              >
+                                Stage
+                              </button>
                             </button>
+                            {isViewingDiff && (
+                              <div style={{ borderBottom: "1px solid var(--border)" }} className="px-2 py-2">
+                                {diffLoading ? (
+                                  <div className="flex items-center justify-center py-4">
+                                    <span className="spinner w-4 h-4" style={{ border: "2px solid rgba(0,212,255,0.2)", borderTopColor: "var(--cyan)" }} />
+                                  </div>
+                                ) : (
+                                  <GitDiffViewer diff={diffContent} emptyMessage="No unstaged changes for this file" />
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -875,28 +962,48 @@ export default function GitPage() {
             {activeTab === "log" && (
               <div className="p-4 fade-in">
                 <div className="rounded-lg overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-                  {logs.map((log, i) => (
-                    <div
-                      key={log.hash}
-                      className="flex items-start gap-4 px-4 py-3 group slide-up"
-                      style={{ borderBottom: i < logs.length - 1 ? "1px solid var(--border)" : "none", "--i": Math.min(i, 10) } as React.CSSProperties}
-                    >
-                      <span
-                        className="font-mono text-xs px-2 py-1 rounded shrink-0"
-                        style={{ background: "rgba(255,215,0,0.1)", color: "var(--yellow)" }}
-                      >
-                        {log.shortHash}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm leading-snug" style={{ color: "var(--text)" }}>
-                          {log.message}
-                        </div>
-                        <div className="text-xs mt-1" style={{ color: "var(--dim)" }}>
-                          {log.author} · {new Date(log.date).toLocaleString()}
-                        </div>
+                  {logs.map((log, i) => {
+                    const isViewingCommitDiff = commitDiffHash === log.hash;
+                    return (
+                      <div key={log.hash}>
+                        <button
+                          type="button"
+                          className="flex items-start gap-4 px-4 py-3 group slide-up w-full text-left cursor-pointer"
+                          style={{ borderBottom: isViewingCommitDiff ? "none" : (i < logs.length - 1 ? "1px solid var(--border)" : "none"), "--i": Math.min(i, 10), background: isViewingCommitDiff ? "var(--selected-bg)" : "transparent" } as React.CSSProperties}
+                          onClick={() => loadCommitDiff(log.hash)}
+                        >
+                          <span
+                            className="font-mono text-xs px-2 py-1 rounded shrink-0"
+                            style={{ background: "rgba(255,215,0,0.1)", color: "var(--yellow)" }}
+                          >
+                            {log.shortHash}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm leading-snug" style={{ color: "var(--text)" }}>
+                              {log.message}
+                            </div>
+                            <div className="text-xs mt-1" style={{ color: "var(--dim)" }}>
+                              {log.author} · {new Date(log.date).toLocaleString()}
+                            </div>
+                          </div>
+                          <span className="text-xs opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1" style={{ color: "var(--cyan)" }}>
+                            {isViewingCommitDiff ? "✕" : "Diff"}
+                          </span>
+                        </button>
+                        {isViewingCommitDiff && (
+                          <div style={{ borderBottom: "1px solid var(--border)" }} className="px-2 py-3">
+                            {commitDiffLoading ? (
+                              <div className="flex items-center justify-center py-4">
+                                <span className="spinner w-4 h-4" style={{ border: "2px solid rgba(0,212,255,0.2)", borderTopColor: "var(--cyan)" }} />
+                              </div>
+                            ) : (
+                              <GitDiffViewer diff={commitDiffContent} emptyMessage="No changes in this commit" defaultExpanded={false} />
+                            )}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
