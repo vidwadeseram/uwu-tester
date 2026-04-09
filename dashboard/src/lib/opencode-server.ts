@@ -92,6 +92,31 @@ const REPO_ROOT = process.cwd().replace("/dashboard", "");
 
 let nextPort = BASE_PORT;
 
+export async function reconnectServers(): Promise<void> {
+  const hostname = "127.0.0.1";
+  for (let port = BASE_PORT; port < BASE_PORT + MAX_PORT_ATTEMPTS; port++) {
+    try {
+      const res = await fetch(`http://${hostname}:${port}/session/status`, { signal: AbortSignal.timeout(1000) });
+      if (res.ok) {
+        const id = randomUUID();
+        const server: OpenCodeServer = {
+          id,
+          workspace: `reconnected:${port}`,
+          port,
+          hostname,
+          pid: 0,
+          process: null as unknown as ChildProcess,
+          startedAt: new Date().toISOString(),
+          status: "ready",
+        };
+        servers.set(id, server);
+        console.log(`[opencode-server] Reconnected to existing server at port ${port}`);
+        nextPort = port + 1;
+      }
+    } catch {}
+  }
+}
+
 function getNextPort(): number {
   const port = nextPort;
   nextPort++;
@@ -161,6 +186,9 @@ export async function getOrCreateServer(workspace: string): Promise<OpenCodeServ
 }
 
 export async function startServer(workspace: string): Promise<OpenCodeServer> {
+  const existing = getServerForWorkspace(workspace);
+  if (existing && existing.status === "ready") return existing;
+
   const id = randomUUID();
   const port = getNextPort();
   const hostname = "127.0.0.1";
@@ -170,15 +198,15 @@ export async function startServer(workspace: string): Promise<OpenCodeServer> {
     ["serve", "--port", String(port), "--hostname", hostname, "--cors", "http://localhost:3000"],
     {
       cwd: workspace,
-      detached: false,
+      detached: true,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        // Suppress TUI when running headless
         TERM: "dumb",
       },
     }
   );
+  proc.unref();
 
   const server: OpenCodeServer = {
     id,
@@ -224,13 +252,8 @@ export async function startServer(workspace: string): Promise<OpenCodeServer> {
 export async function stopServer(serverId: string): Promise<void> {
   const server = servers.get(serverId);
   if (!server) return;
-
-  try {
-    server.process.kill("SIGTERM");
-    server.status = "stopped";
-  } catch {
-    // Already dead
-  }
+  try { server.process.kill("SIGTERM"); } catch { /* already dead */ }
+  server.status = "stopped";
   servers.delete(serverId);
 }
 
@@ -245,6 +268,9 @@ export function getAllServers(): OpenCodeServer[] {
 export function getServerForWorkspace(workspace: string): OpenCodeServer | undefined {
   for (const [, server] of servers) {
     if (server.workspace === workspace && server.status === "ready") {
+      return server;
+    }
+    if (server.workspace.startsWith("reconnected:") && server.status === "ready") {
       return server;
     }
   }

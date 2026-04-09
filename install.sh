@@ -73,7 +73,6 @@ echo ""
 if systemctl list-unit-files uwu-code.service &>/dev/null && systemctl is-active uwu-code &>/dev/null; then
   info "Existing uwu-code detected — stopping old services..."
   systemctl stop uwu-code uwu-code-ttyd uwu-code-openclaw 2>/dev/null || true
-  success "Old services stopped."
 fi
 
 if [ -d "$INSTALL_DIR/dashboard/.next" ]; then
@@ -235,18 +234,6 @@ success "ttyd already installed."
 fi
 
 ###############################################################################
-# uwu user — Claude Code refuses --dangerously-skip-permissions as root.
-# We create a non-root 'uwu' user that agents run under.
-###############################################################################
-info "Setting up 'uwu' agent user..."
-if ! id -u uwu &>/dev/null; then
-  useradd -m -s /bin/bash uwu
-  success "User 'uwu' created."
-else
-  success "User 'uwu' already exists."
-fi
-
-###############################################################################
 # Dotfiles (neovim + tmux configs from vidwadeseram/dotfiles via stow)
 ###############################################################################
 DOTFILES_DIR="/root/.dotfiles"
@@ -259,14 +246,14 @@ else
 fi
 
 cd "$DOTFILES_DIR"
-for pkg in nvim tmux claude opencode; do
+for pkg in nvim tmux opencode; do
   [ -d "$pkg" ] || continue
   stow --restow --target="/root" "$pkg" 2>/dev/null || \
     stow --target="/root" "$pkg" 2>/dev/null || true
 done
 
 mkdir -p /home/uwu/.config
-for pkg in nvim tmux claude opencode; do
+for pkg in nvim tmux opencode; do
   [ -d "$pkg" ] || continue
   stow --restow --target="/home/uwu" "$pkg" 2>/dev/null || \
     stow --target="/home/uwu" "$pkg" 2>/dev/null || true
@@ -282,25 +269,6 @@ timeout 300 nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || \
 timeout 300 sudo -u uwu HOME=/home/uwu nvim --headless "+Lazy! sync" +qa >/dev/null 2>&1 || true
 
 success "Dotfiles applied and Neovim plugins installed."
-
-###############################################################################
-# Claude Code CLI
-###############################################################################
-# Claude Code CLI
-###############################################################################
-if ! command -v claude &>/dev/null; then
-  info "Installing Claude Code..."
-  npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
-  success "Claude Code installed."
-else
-  success "Claude Code already installed."
-fi
-# Claude binary may be installed under /root/.local which non-root users can't
-# traverse. Copy the real binary to /usr/local/bin so the uwu user can run it.
-CLAUDE_REAL=$(readlink -f "$(command -v claude 2>/dev/null || echo '')" 2>/dev/null || true)
-if [ -f "$CLAUDE_REAL" ] && [ "$CLAUDE_REAL" != "/usr/local/bin/claude" ]; then
-  install -m 755 "$CLAUDE_REAL" /usr/local/bin/claude
-fi
 
 ###############################################################################
 # OpenCode
@@ -348,24 +316,14 @@ else
   warn "OpenCode installed but version check failed."
 fi
 
-###############################################################################
-# Allow root to sudo as uwu without a password (SSH sessions are root)
-cat > /etc/sudoers.d/uwu-agents << 'SUDOEOF'
-# Allow root to run commands as uwu without a password
-root ALL=(uwu) NOPASSWD: ALL
-SUDOEOF
-chmod 440 /etc/sudoers.d/uwu-agents
+if ! id -u uwu &>/dev/null; then
+  useradd -m -s /bin/bash uwu
+fi
 
-# Give uwu write access to the dirs it needs
 mkdir -p "$INSTALL_DIR/openclaw/data"
 chmod -R a+rX "$INSTALL_DIR"
 chmod -R a+w  "$INSTALL_DIR/openclaw/data"
 chmod    a+rw "$INSTALL_DIR/settings.json" 2>/dev/null || true
-
-mkdir -p /home/uwu/.config/opencode
-chown -R uwu:uwu /home/uwu/.config
-
-success "'uwu' user configured."
 
 ###############################################################################
 # Clone / update repo
