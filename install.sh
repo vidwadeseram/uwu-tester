@@ -317,18 +317,18 @@ else
 fi
 
 ###############################################################################
-# uwu-agent plugin (multi-agent orchestration for OpenCode)
+# oh-my-opencode plugin (multi-agent orchestration for OpenCode)
 ###############################################################################
-info "Installing uwu-agent plugin..."
+info "Installing oh-my-opencode plugin..."
 if command -v bun &>/dev/null; then
-  bun add -g uwu-agent >/dev/null 2>&1 || npm install -g uwu-agent >/dev/null 2>&1 || true
+  bun add -g oh-my-opencode >/dev/null 2>&1 || npm install -g oh-my-opencode >/dev/null 2>&1 || true
 else
-  npm install -g uwu-agent >/dev/null 2>&1 || true
+  npm install -g oh-my-opencode >/dev/null 2>&1 || true
 fi
-if command -v bunx &>/dev/null && bunx uwu-agent doctor >/dev/null 2>&1; then
-  success "uwu-agent plugin installed and verified."
+if command -v bunx &>/dev/null && bunx oh-my-opencode --version >/dev/null 2>&1; then
+  success "oh-my-opencode plugin $(bunx oh-my-opencode --version 2>/dev/null | head -1) installed."
 else
-  success "uwu-agent plugin installed."
+  success "oh-my-opencode plugin installed."
 fi
 
 if ! id -u uwu &>/dev/null; then
