@@ -13,6 +13,7 @@
 
 import { spawn, ChildProcess } from "child_process";
 import { randomUUID } from "crypto";
+import { readEnvKeys } from "@/app/lib/settings";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -202,6 +203,7 @@ export async function startServer(workspace: string): Promise<OpenCodeServer> {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
+        ...readEnvKeys(),
         TERM: "dumb",
       },
     }
