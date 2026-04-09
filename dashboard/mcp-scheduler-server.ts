@@ -3,10 +3,10 @@
  * MCP Server for uwu-code Scheduler
  * Exposes Scheduler task management and execution via Model Context Protocol.
  *
- * Execution model (no openclaw daemon required):
- *   scheduler_run_task builds the prompt for a task and spawns
- *   `claude --dangerously-skip-permissions -p <prompt>` as a detached subprocess.
- *   The spawned Claude session has access to this MCP server and calls
+ * Execution model (via OpenCode Server):
+ *   scheduler_run_task sends the task prompt to the dashboard API,
+ *   which spawns an OpenCode Server session and runs the task.
+ *   The spawned session has access to this MCP server and calls
  *   scheduler_update_task to write back its status/report when done.
  */
 
@@ -22,14 +22,10 @@ import {
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { spawn, execSync } from "child_process";
 
-// __dirname is the dashboard/ directory; tasks live in ../openclaw/data/
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
 const DATA_DIR = path.resolve(__dirname, "..", "openclaw", "data");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
-
-// Repo root — spawned `claude` processes run from here so they load .mcp/config.json
-const REPO_ROOT = path.resolve(__dirname, "..");
 
 type TaskStatus = "pending" | "running" | "completed" | "failed" | "scheduled" | "manual";
 type ScheduleMode = "anytime" | "once" | "daily" | "weekly" | "manual";
@@ -209,9 +205,10 @@ const QUEUE_NOW_TOOL: Tool = {
 const RUN_TASK_TOOL: Tool = {
   name: "scheduler_run_task",
   description:
-    "Build the execution prompt for a task and spawn a detached `claude --dangerously-skip-permissions -p <prompt>` subprocess. " +
-    "Marks the task as 'running'. The spawned session writes back results via scheduler_update_task when done. " +
-    "Use this from the scheduler poller CronCreate to execute due tasks without openclaw.",
+    "Run a task via the dashboard API (OpenCode Server). " +
+    "Marks the task as 'running' and spawns an OpenCode Server session. " +
+    "The spawned session writes back results via scheduler_update_task when done. " +
+    "Use this from the scheduler poller to execute due tasks.",
   inputSchema: {
     type: "object",
     properties: { task_id: { type: "string" } },
@@ -323,10 +320,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
         }
 
         if (args.status === "completed" || args.status === "failed") {
-          const sessionName = `uwu-${String(args.task_id).slice(0, 8)}`;
           try {
-            execSync(`tmux kill-session -t "${sessionName}" 2>/dev/null || true`, { timeout: 5000 });
-          } catch { /* ignore */ }
+            await fetch(`http://localhost:3000/api/opencode/abort`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ taskId: args.task_id }),
+            });
+          } catch { /* session may already be gone */ }
         }
 
         saveTasks(tasks);
@@ -362,30 +362,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
 
         const tasks = loadTasks();
         const idx = tasks.findIndex(t => t.id === args.task_id);
-        if (idx === -1) return ok({ error: "Task not found", task_id: args.task_id });
+        if (idx === -1) return ok({ error: "Task not found", task_id: args.task_id as string });
 
         const task = tasks[idx];
+
+        const resp = await fetch("http://localhost:3000/api/opencode/servers");
+        const serverInfo = await resp.json() as { servers: Array<{ id: string; workspace: string; port: number; status: string }> };
+
+        let serverUrl = "";
+        for (const s of serverInfo.servers) {
+          if (s.workspace === (task.workspace || "/opt/workspaces") && s.status === "ready") {
+            serverUrl = `http://127.0.0.1:${s.port}`;
+            break;
+          }
+        }
+
+        if (!serverUrl) {
+          return ok({ error: "No OpenCode server available for workspace", task_id: task.id });
+        }
+
+        const sessionResp = await fetch(`${serverUrl}/session`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: task.title }),
+        });
+        const session = await sessionResp.json() as { id: string };
+
         const prompt = buildExecutionPrompt(task);
+        await fetch(`${serverUrl}/session/${session.id}/prompt_async`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parts: [{ type: "text", text: prompt }] }),
+        });
 
-        // Spawn detached claude subprocess; it runs from the repo root so it
-        // picks up .mcp/config.json and can call scheduler_update_task when done.
-        const child = spawn(
-          "claude",
-          ["--dangerously-skip-permissions", "-p", prompt],
-          { cwd: REPO_ROOT, detached: true, stdio: "ignore" }
-        );
-        child.unref();
-
-        // Mark running immediately
         tasks[idx].status = "running";
         tasks[idx].started_at = new Date().toISOString();
         saveTasks(tasks);
 
         return ok({
           success: true,
-          message: "Task spawned",
+          message: "Task spawned via OpenCode Server",
           task_id: task.id,
-          pid: child.pid,
+          session_id: session.id,
         });
       }
 

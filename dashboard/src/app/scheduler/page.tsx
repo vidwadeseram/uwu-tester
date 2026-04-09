@@ -39,6 +39,26 @@ interface WorkspaceOption {
   kind: "group" | "project";
 }
 
+// Live activity item for opencode status feed
+interface ActivityItem {
+  id: string;
+  taskId: string;
+  sessionId?: string;
+  serverId?: string;
+  timestamp: string;
+  type:
+    | "tool_call"
+    | "tool_result"
+    | "message_sent"
+    | "message_received"
+    | "permission_request"
+    | "error"
+    | "status_change"
+    | "diff";
+  content: string;
+  metadata?: any;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string) {
@@ -208,6 +228,76 @@ function TaskCard({
   const bg    = STATUS_BG[task.status]    ?? "var(--hover-bg)";
   const isActive = ["pending", "running", "scheduled", "rate_limited"].includes(task.status);
 
+  // Live activity UI state for running tasks
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const activityContainerRef = useRef<HTMLDivElement>(null);
+  const [liveMessage, setLiveMessage] = useState("");
+
+  async function abortTask() {
+    try {
+      await fetch("/api/opencode/abort", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id }),
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  async function sendMessage() {
+    const m = liveMessage.trim();
+    if (!m) return;
+    try {
+      await fetch("/api/opencode/message", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taskId: task.id, message: m }),
+      });
+      setLiveMessage("");
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    if (!liveOpen || task.status !== "running") return;
+    let active = true;
+    const poll = async () => {
+      if (!active) return;
+      try {
+        const res = await fetch(`/api/opencode/status?taskId=${encodeURIComponent(task.id)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (active) setActivity(data.activity ?? []);
+        }
+      } catch { /* ignore */ }
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => { active = false; clearInterval(interval); };
+  }, [liveOpen, task.status, task.id]);
+
+  useEffect(() => {
+    if (!activityContainerRef.current) return;
+    activityContainerRef.current.scrollTop = activityContainerRef.current.scrollHeight;
+  }, [activity]);
+
+  function activityIcon(type: ActivityItem["type"]): { icon: string; color: string } {
+    switch (type) {
+      case "tool_call":     return { icon: "⚙", color: "#00d4ff" };
+      case "tool_result":   return { icon: "✓", color: "#00ff88" };
+      case "message_sent":  return { icon: "↑", color: "#ffd700" };
+      case "message_received": return { icon: "↓", color: "#a855f7" };
+      case "permission_request": return { icon: "🔒", color: "#f97316" };
+      case "error":         return { icon: "✗", color: "#ff4444" };
+      case "status_change": return { icon: "●", color: "#4a5568" };
+      case "diff":          return { icon: "±", color: "#00ff88" };
+      default:              return { icon: "·", color: "#4a5568" };
+    }
+  }
+
   return (
     <div
       className="card p-4 flex flex-col gap-2 transition-colors"
@@ -310,6 +400,24 @@ function TaskCard({
             Terminal
           </button>
         )}
+        {task.status === "running" && (
+          <button
+            onClick={() => setLiveOpen((v) => !v)}
+            type="button"
+            className="text-xs px-2.5 py-1 rounded transition-opacity hover:opacity-80 flex items-center gap-1"
+            style={{
+              background: liveOpen ? "rgba(0,212,255,0.18)" : "rgba(0,212,255,0.08)",
+              color: "#00d4ff",
+              border: "1px solid rgba(0,212,255,0.25)",
+            }}
+          >
+            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <title>Live</title>
+              <circle cx="12" cy="12" r="2" /><path d="M16.24 7.76a6 6 0 010 8.49m-8.48-.01a6 6 0 010-8.49m11.31-2.82a10 10 0 010 14.14m-14.14 0a10 10 0 010-14.14" />
+            </svg>
+            {liveOpen ? "Hide Live" : "Live"}
+          </button>
+        )}
         {!isActive && (
           <button
             onClick={onViewReport}
@@ -365,6 +473,100 @@ function TaskCard({
           Delete
         </button>
       </div>
+
+      {task.status === "running" && liveOpen && (
+        <div
+          className="flex flex-col gap-2 mt-2 rounded-lg overflow-hidden"
+          style={{ background: "var(--surface)", border: "1px solid rgba(0,212,255,0.15)" }}
+        >
+          <div
+            ref={activityContainerRef}
+            className="overflow-y-auto px-3 py-2 space-y-1"
+            style={{ maxHeight: "280px", minHeight: "80px" }}
+          >
+            {activity.length === 0 ? (
+              <div className="text-xs text-center py-6" style={{ color: "#4a5568" }}>
+                Waiting for activity…
+              </div>
+            ) : (
+              activity.map((item) => {
+                const { icon, color } = activityIcon(item.type);
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-start gap-2 text-xs py-1"
+                    style={{ borderBottom: "1px solid rgba(255,255,255,0.03)" }}
+                  >
+                    <span
+                      className="w-5 h-5 rounded flex items-center justify-center flex-shrink-0 text-xs font-bold mt-0.5"
+                      style={{ background: `${color}18`, color, border: `1px solid ${color}30` }}
+                    >
+                      {icon}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-mono truncate" style={{ color: "var(--text)" }}>
+                        {item.content}
+                      </div>
+                      <div className="mt-0.5" style={{ color: "#4a5568", fontSize: "0.65rem" }}>
+                        {timeAgo(item.timestamp)}
+                        {item.type === "tool_call" && item.metadata?.toolName && (
+                          <span style={{ color: "#00d4ff", marginLeft: "6px" }}>
+                            {String(item.metadata.toolName)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div
+            className="flex items-center gap-2 px-3 py-2 border-t"
+            style={{ borderColor: "rgba(0,212,255,0.1)" }}
+          >
+            <input
+              type="text"
+              value={liveMessage}
+              onChange={(e) => setLiveMessage(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); sendMessage(); } }}
+              placeholder="Send message to session…"
+              className="flex-1 text-xs px-3 py-1.5 rounded"
+              style={{
+                background: "var(--input-bg)",
+                border: "1px solid var(--input-border)",
+                color: "var(--text)",
+                outline: "none",
+              }}
+            />
+            <button
+              onClick={sendMessage}
+              type="button"
+              className="text-xs px-3 py-1.5 rounded font-medium transition-opacity hover:opacity-80"
+              style={{
+                background: "rgba(0,255,136,0.12)",
+                color: "#00ff88",
+                border: "1px solid rgba(0,255,136,0.25)",
+              }}
+            >
+              Send
+            </button>
+            <button
+              onClick={abortTask}
+              type="button"
+              className="text-xs px-3 py-1.5 rounded font-medium transition-opacity hover:opacity-80"
+              style={{
+                background: "rgba(255,68,68,0.1)",
+                color: "#ff4444",
+                border: "1px solid rgba(255,68,68,0.2)",
+              }}
+            >
+              Abort
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1239,7 +1441,7 @@ export default function SchedulerPage() {
           </div>
           <div>
             <h1 className="text-lg font-bold" style={{ color: "#ffd700" }}>Scheduler</h1>
-            <p className="text-xs" style={{ color: "#4a5568" }}>Runs <span style={{ color: "#00d4ff" }}>claude code</span> directly — no daemon required</p>
+            <p className="text-xs" style={{ color: "#4a5568" }}>Runs via <span style={{ color: "#00ff88" }}>OpenCode Server</span> — live activity & intervention</p>
           </div>
         </div>
 

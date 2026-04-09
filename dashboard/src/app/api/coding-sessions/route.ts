@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb, schema } from "@/lib/db";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "crypto";
-import { execFile } from "child_process";
 
 interface CodingSessionInput {
   projectId: string;
@@ -11,45 +10,18 @@ interface CodingSessionInput {
   task: string;
 }
 
-function runTool(
-  tool: "opencode" | "claude" | "codex",
+async function runToolViaServer(
   task: string,
-  workingDir: string
-): Promise<{ output: string; exitCode: number }> {
-  return new Promise((resolve) => {
-    let command = "";
-    let args: string[] = [];
-    switch (tool) {
-      case "opencode":
-        command = "opencode";
-        args = [task];
-        break;
-      case "claude":
-        command = "claude";
-        args = ["--print", task];
-        break;
-      case "codex":
-        command = "codex";
-        args = [task];
-        break;
-    }
-
-    execFile(command, args, {
-      encoding: "utf-8",
-      timeout: 300000,
-      cwd: workingDir,
-      shell: false,
-    }, (err, stdout, stderr) => {
-      if (err) {
-        const error = err as { code?: number };
-        resolve({
-          output: stderr || String(err),
-          exitCode: error.code || 1,
-        });
-      } else {
-        resolve({ output: stdout, exitCode: 0 });
-      }
-    });
+  workingDir: string,
+): Promise<{ serverId: string; sessionId: string }> {
+  const { runTaskViaServer } = await import("@/lib/opencode-server");
+  return runTaskViaServer({
+    taskId: randomUUID(),
+    title: task.slice(0, 60),
+    description: task,
+    workspace: workingDir,
+    type: "coding",
+    preferredTool: "opencode",
   });
 }
 
@@ -113,20 +85,29 @@ export async function POST(request: NextRequest) {
       startedAt,
     });
 
-    const result = await runTool(tool, task, workingDir);
+    try {
+      const result = await runToolViaServer(task, workingDir);
 
-    const completedAt = new Date();
-    const durationSeconds = Math.round((completedAt.getTime() - startedAt.getTime()) / 1000);
-
-    await db
-      .update(schema.codingSessions)
-      .set({
-        status: result.exitCode === 0 ? "completed" : "failed",
-        result: result.output,
-        completedAt,
-        durationSeconds,
-      })
-      .where(eq(schema.codingSessions.id, id));
+      await db
+        .update(schema.codingSessions)
+        .set({
+          status: "completed",
+          result: `Task spawned via OpenCode Server. Session: ${result.sessionId}`,
+          completedAt: new Date(),
+          durationSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
+        })
+        .where(eq(schema.codingSessions.id, id));
+    } catch (err) {
+      await db
+        .update(schema.codingSessions)
+        .set({
+          status: "failed",
+          result: err instanceof Error ? err.message : String(err),
+          completedAt: new Date(),
+          durationSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
+        })
+        .where(eq(schema.codingSessions.id, id));
+    }
 
     const session = await db.select().from(schema.codingSessions).where(eq(schema.codingSessions.id, id)).get();
 

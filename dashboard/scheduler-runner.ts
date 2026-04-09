@@ -1,12 +1,10 @@
 #!/usr/bin/env npx tsx
 /**
  * uwu-code Scheduler Runner
- * Replaces openclaw/agent.py for the Scheduler feature.
+ * Uses OpenCode Server API instead of CLI subprocess spawning.
  *
- * The prompt for every task is simply its description — no complex agent layer.
- * Spawns `claude --dangerously-skip-permissions -p "<description>"` for each
- * due task and writes status back via the uwu-scheduler MCP (which the spawned
- * session loads from .mcp/config.json).
+ * For each due task, calls the dashboard API which handles
+ * server session creation and message sending.
  *
  * Usage:
  *   npx tsx dashboard/scheduler-runner.ts
@@ -15,13 +13,13 @@
 
 import fs from "fs";
 import path from "path";
-import { spawn, execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const TASKS_FILE = path.join(REPO_ROOT, "openclaw", "data", "tasks.json");
 const POLL_MS = 15_000;
+const DASHBOARD_URL = process.env.DASHBOARD_URL || "http://localhost:3000";
 
 type TaskStatus = "pending" | "running" | "completed" | "failed" | "scheduled" | "manual";
 
@@ -49,26 +47,6 @@ function load(): Task[] {
 function save(tasks: Task[]) {
   fs.mkdirSync(path.dirname(TASKS_FILE), { recursive: true });
   fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-}
-
-/** The prompt IS the description — no transformation needed. */
-function buildPrompt(task: Task): string {
-  const ws = task.workspace || "/opt/workspaces";
-  if (task.type === "coding") {
-    return (
-      `Execute this scheduled coding task: ${task.description}\n\n` +
-      `Working directory: ${ws}\n\n` +
-      `Use your tools fully. When done, call scheduler_update_task MCP: ` +
-      `task_id="${task.id}", status="completed"/"failed", report=<summary>, ` +
-      `completed_at=<ISO>, last_run_at=<ISO>, last_run_status="completed"/"failed".`
-    );
-  }
-  return (
-    `${task.description}\n\n` +
-    `When done, call scheduler_update_task MCP: ` +
-    `task_id="${task.id}", status="completed"/"failed", report=<findings>, ` +
-    `completed_at=<ISO>, last_run_at=<ISO>, last_run_status="completed"/"failed".`
-  );
 }
 
 function isDue(task: Task, now: Date): boolean {
@@ -99,19 +77,15 @@ function nextWeeklyUtc(scheduleTime: string, weekday: number, now: Date): string
   return c.toISOString();
 }
 
-function runTask(task: Task) {
-  const prompt = buildPrompt(task);
+async function runTaskViaDashboard(task: Task) {
   const now = new Date().toISOString();
 
-  // Mark running before spawning
   const tasks = load();
   const idx = tasks.findIndex(t => t.id === task.id);
   if (idx === -1) return;
   tasks[idx].status = "running";
   tasks[idx].started_at = now;
 
-  // If recurring, immediately compute and set next run so the task
-  // doesn't get picked up again while the current run is in flight.
   const mode = task.schedule_mode;
   if (mode === "daily" && task.schedule_time) {
     const next = nextDailyUtc(task.schedule_time, new Date());
@@ -123,20 +97,21 @@ function runTask(task: Task) {
 
   save(tasks);
 
-  const workspace = task.workspace || REPO_ROOT;
-  const tmuxSession = `uwu-${task.id.slice(0, 8)}`;
   try {
-    execSync(`tmux new-session -d -s "${tmuxSession}" -c "${workspace}" 2>/dev/null || true`, { timeout: 5000 });
-  } catch { /* ignore */ }
-
-  const bin = task.preferred_tool === "claude" ? "claude" : "opencode";
-  const escapedPrompt = prompt.replace(/'/g, "'\\''");
-  const cmd = bin === "claude"
-    ? `claude --dangerously-skip-permissions -p '${escapedPrompt}'`
-    : `opencode -p '${escapedPrompt}'`;
-
-  spawn("tmux", ["send-keys", "-t", tmuxSession, cmd, "Enter"], { cwd: REPO_ROOT });
-  console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) tool=${bin} tmux=${tmuxSession} cwd=${workspace}`);
+    const res = await fetch(`${DASHBOARD_URL}/api/scheduler/tasks/${task.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "queue_now" }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.error(`[scheduler] Dashboard API error for task ${task.id}: ${res.status} ${body}`);
+    } else {
+      console.log(`[scheduler] spawned task ${task.id} (${task.title.slice(0, 50)}) via OpenCode Server`);
+    }
+  } catch (err) {
+    console.error(`[scheduler] Failed to contact dashboard for task ${task.id}:`, err);
+  }
 }
 
 function tick() {
@@ -145,14 +120,15 @@ function tick() {
   const due = tasks.filter(t => isDue(t, now));
   for (const task of due) {
     console.log(`[scheduler] due: ${task.id} "${task.title.slice(0, 60)}" (${task.status})`);
-    runTask(task);
+    runTaskViaDashboard(task);
   }
   if (due.length === 0) {
     process.stdout.write(".");
   }
 }
 
-console.log(`[scheduler] started — polling every ${POLL_MS / 1000}s (openclaw-free)`);
+console.log(`[scheduler] started — polling every ${POLL_MS / 1000}s (OpenCode Server mode)`);
 console.log(`[scheduler] tasks file: ${TASKS_FILE}`);
+console.log(`[scheduler] dashboard: ${DASHBOARD_URL}`);
 tick();
 setInterval(tick, POLL_MS);

@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -604,81 +603,28 @@ def get_next_task(tasks: list[TaskDict]) -> TaskDict | None:
 
 # ── executors ────────────────────────────────────────────────────────────────
 
-def create_tmux_session(session_id: str, workspace: str) -> str:
-    tmux_session = f"uwu-{session_id[:8]}"
-    subprocess.run(
-        ["tmux", "new-session", "-d", "-s", tmux_session, "-c", workspace],
-        capture_output=True,
-    )
-    return tmux_session
-
 
 def run_coding_task(task: TaskDict, is_retry: bool = False) -> tuple[bool | None, str]:
     """
+    Runs a coding task via the dashboard API (which uses OpenCode Server).
     Returns (True, output) on success, (False, output) on failure,
     (None, output) if rate-limited.
-    When is_retry=True (previously rate-limited), sends 'continue' to resume.
     """
     workspace = task.get("workspace") or "/opt/workspaces"
     desc = "continue" if is_retry else task["description"]
-    pref = task.get("preferred_tool", "auto")
+    tid = task.get("id", "unknown")
 
-    tmux_session = create_tmux_session(task["id"], workspace)
-    update_task(task["id"], session_id=task["id"])
-
-    claude_cmd = ["claude", "--dangerously-skip-permissions", "--print", desc]
-    opencode_cmd = ["opencode", "run", desc]
-
-    if pref == "claude":
-        commands = [claude_cmd]
-    elif pref == "opencode":
-        commands = [opencode_cmd, claude_cmd]
-    else:
-        commands = [opencode_cmd, claude_cmd]
-
-    last_output = ""
-    for cmd in commands:
-        tool_name = cmd[0]
-        log(f"  → trying {tool_name} in {workspace}")
-        try:
-            escaped_desc = desc.replace("'", "'\\''")
-            full_cmd = " ".join(cmd[:-1] + [f"'{escaped_desc}'"])
-            
-            subprocess.run(
-                ["tmux", "send-keys", "-t", tmux_session, full_cmd, "Enter"],
-                capture_output=True,
-            )
-            
-            proc = subprocess.run(
-                cmd,
-                cwd=workspace,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                env={**os.environ},
-            )
-            
-            output = proc.stdout
-            if proc.stderr.strip():
-                output += "\n\n--- stderr ---\n" + proc.stderr
-            last_output = output
-
-            if is_rate_limited(output):
-                return None, output
-
-            if proc.returncode == 0:
-                return True, f"**Tool:** {tool_name}\n**Workspace:** {workspace}\n\n{output}"
-
-            log(f"  {tool_name} exited {proc.returncode}, trying next...")
-
-        except subprocess.TimeoutExpired:
-            return False, f"Timed out after 10 minutes (tool: {tool_name})"
-        except FileNotFoundError:
-            log(f"  {tool_name} not found, skipping")
-        except Exception as e:
-            log(f"  Error running {tool_name}: {e}")
-
-    return False, f"All tools failed.\n\nLast output:\n{last_output}"
+    try:
+        from api_client import get_api_client
+        client = get_api_client()
+        result = client.update_task(tid, {
+            "action": "queue_now",
+            "status": "running",
+            "started_at": now_iso(),
+        })
+        return True, f"Task {tid} spawned via OpenCode Server API (dashboard)."
+    except Exception as e:
+        return False, f"Failed to spawn task via dashboard API: {e}"
 
 
 def run_research_task(task: TaskDict) -> tuple[bool | None, str]:

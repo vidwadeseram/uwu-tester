@@ -4,56 +4,20 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import { spawn } from "child_process";
-import { createTmuxSession, sessions } from "@/lib/terminal-sessions";
+import { runTaskViaServer } from "@/lib/opencode-server";
 
 const DATA_DIR = path.join(process.cwd(), "..", "openclaw", "data");
 const TASKS_FILE = path.join(DATA_DIR, "tasks.json");
-// Repo root: dashboard/../ so that spawned `claude` picks up .mcp/config.json
-const REPO_ROOT = path.resolve(process.cwd(), "..");
 
-function buildPrompt(task: Task): string {
-  if (task.type === "coding") {
-    const ws = task.workspace || "/opt/workspaces";
-    return (
-      `You are executing scheduled coding task "${task.title}".\n\n` +
-      `Description: ${task.description}\n` +
-      `Target workspace: ${ws}\n\n` +
-      `Use your tools (Bash, Edit, Write, etc.) to complete this task fully in the target workspace.\n\n` +
-      `When done, call scheduler_update_task MCP tool: task_id="${task.id}", ` +
-      `status="completed" or "failed", report=<summary>, ` +
-      `completed_at=<ISO timestamp>, last_run_at=<ISO timestamp>, last_run_status="completed" or "failed".`
-    );
-  }
-  return (
-    `You are executing scheduled research task "${task.title}".\n\n` +
-    `Task: ${task.description}\n\n` +
-    `Research and answer this thoroughly. Use WebSearch or WebFetch if helpful.\n\n` +
-    `When done, call scheduler_update_task MCP tool: task_id="${task.id}", ` +
-    `status="completed" or "failed", report=<findings>, ` +
-    `completed_at=<ISO timestamp>, last_run_at=<ISO timestamp>, last_run_status="completed" or "failed".`
-  );
-}
-
-function spawnTask(task: Task): string {
-  const prompt = buildPrompt(task);
-  const workspace = task.workspace || "/opt/workspaces";
-
-  const tmuxSession = createTmuxSession(task.id, workspace);
-  sessions.set(task.id, tmuxSession);
-
-  const escapedPrompt = prompt.replace(/'/g, "'\\''");
-  const bin = task.preferred_tool === "claude" ? "claude" : "opencode";
-  const cmd = bin === "claude"
-    ? `claude --dangerously-skip-permissions -p '${escapedPrompt}'`
-    : `opencode -p '${escapedPrompt}'`;
-  
-  spawn(
-    "tmux",
-    ["send-keys", "-t", tmuxSession.tmuxSession, cmd, "Enter"],
-    { cwd: REPO_ROOT }
-  );
-
+async function spawnTask(task: Task): Promise<string> {
+  await runTaskViaServer({
+    taskId: task.id,
+    title: task.title,
+    description: task.description,
+    workspace: task.workspace || "/opt/workspaces",
+    type: task.type,
+    preferredTool: task.preferred_tool,
+  });
   return task.id;
 }
 
@@ -238,12 +202,16 @@ export async function POST(req: NextRequest) {
     created_at: new Date().toISOString(),
   };
 
-  // For anytime tasks: spawn claude immediately — description is the prompt.
-  // No openclaw daemon needed.
   if (mode === "anytime") {
     task.status = "running";
     task.started_at = new Date().toISOString();
-    task.session_id = spawnTask(task);
+    try {
+      task.session_id = await spawnTask(task);
+    } catch (err) {
+      console.error("[scheduler] Failed to spawn task via OpenCode Server:", err);
+      task.status = "failed";
+      task.report = `Failed to start: ${err instanceof Error ? err.message : String(err)}`;
+    }
     const tasks = loadTasks();
     tasks.push(task);
     saveTasks(tasks);
