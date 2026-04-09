@@ -36,7 +36,7 @@ interface Task {
   type: "coding" | "research";
   description: string;
   workspace?: string;
-  preferred_tool?: "claude" | "opencode" | "auto";
+  preferred_tool?: "opencode" | "auto";
   status: TaskStatus;
   schedule_mode: ScheduleMode;
   schedule_time?: string;
@@ -130,7 +130,7 @@ const CREATE_TASK_TOOL: Tool = {
       description: { type: "string", description: "Full task instructions" },
       type: { type: "string", enum: ["coding", "research"] },
       workspace: { type: "string", description: "For coding tasks: workspace path" },
-      preferred_tool: { type: "string", enum: ["auto", "claude", "opencode"] },
+      preferred_tool: { type: "string", enum: ["auto", "opencode"] },
       schedule_mode: {
         type: "string",
         enum: ["anytime", "manual", "once", "daily", "weekly"],
@@ -278,7 +278,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name
           type: taskType,
           description: args.description as string,
           workspace: taskType === "coding" ? ((args.workspace as string) || "/opt/workspaces") : undefined,
-          preferred_tool: taskType === "coding" ? ((args.preferred_tool as "claude" | "opencode" | "auto") || "auto") : undefined,
+          preferred_tool: taskType === "coding" ? ((args.preferred_tool as "opencode" | "auto") || "auto") : undefined,
           status: mode === "manual" ? "manual" : mode === "anytime" ? "pending" : "scheduled",
           schedule_mode: mode,
           schedule_time: args.schedule_time as string | undefined,

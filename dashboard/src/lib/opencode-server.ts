@@ -389,7 +389,7 @@ export interface RunTaskOptions {
   description: string;
   workspace: string;
   type: "coding" | "research";
-  preferredTool?: "opencode" | "claude" | "auto";
+  preferredTool?: "opencode" | "auto";
 }
 
 export async function runTaskViaServer(opts: RunTaskOptions): Promise<{

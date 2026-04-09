@@ -11,7 +11,7 @@ interface Task {
   type: "coding" | "research";
   description: string;
   workspace?: string;
-  preferred_tool?: "claude" | "opencode" | "auto";
+  preferred_tool?: "opencode" | "auto";
   status: "pending" | "running" | "completed" | "failed" | "scheduled" | "manual" | "rate_limited";
   schedule_mode?: "anytime" | "once" | "daily" | "weekly" | "manual";
   schedule_time?: string;
@@ -613,7 +613,6 @@ function NewTaskForm({
   const [useWorktree, setUseWorktree] = useState(false);
   const [worktrees, setWorktrees] = useState<Array<{ id: string; name: string; path: string; branch: string; isOnDisk: boolean }>>([]);
   const [selectedWorktreeId, setSelectedWorktreeId] = useState("");
-  const [tool, setTool] = useState<"auto" | "claude" | "opencode">("auto");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -721,7 +720,7 @@ function NewTaskForm({
       type,
       description: description.trim(),
       workspace: type === "coding" ? workspace : undefined,
-      preferred_tool: type === "coding" ? tool : undefined,
+      preferred_tool: type === "coding" ? "opencode" : undefined,
       schedule_mode: scheduleMode,
     };
 
@@ -946,19 +945,6 @@ function NewTaskForm({
               </div>
             )}
           </div>
-          <div className="flex flex-col gap-1 lg:w-[140px]">
-            <label className="text-xs" htmlFor="tool" style={{ color: "#4a5568" }}>Tool</label>
-            <select
-              id="tool"
-              style={{ ...SELECT, width: "100%" }}
-              value={tool}
-              onChange={(e) => setTool(e.target.value as "auto" | "claude" | "opencode")}
-            >
-              <option value="auto">Auto</option>
-              <option value="claude">Claude Code</option>
-              <option value="opencode">OpenCode</option>
-            </select>
-          </div>
         </div>
       )}
 
@@ -968,7 +954,7 @@ function NewTaskForm({
         <textarea
           id="description"
           style={{ ...INPUT, minHeight: "100px", resize: "vertical" }}
-          placeholder="Describe the coding task in detail. The scheduler passes this prompt directly to opencode or claude code."
+          placeholder="Describe the coding task in detail. The scheduler passes this prompt directly to OpenCode."
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
@@ -1111,10 +1097,9 @@ function BranchPrModal({
   onCancel,
 }: {
   state: BranchPrModalState;
-  onConfirm: (opts: { useBranchPr: boolean; tool: "opencode" | "claude" }) => void;
+  onConfirm: (opts: { useBranchPr: boolean }) => void;
   onCancel: () => void;
 }) {
-  const [tool, setTool] = useState<"opencode" | "claude">("opencode");
   const [useBranchPr, setUseBranchPr] = useState<boolean>(true);
 
   const taskLabel = state.milestone
@@ -1144,38 +1129,6 @@ function BranchPrModal({
         </div>
 
         <div className="px-4 py-3 space-y-3">
-          <div className="space-y-1.5">
-            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
-              Tool
-            </div>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setTool("opencode")}
-                type="button"
-                className="flex-1 py-2 rounded text-sm font-semibold transition-all"
-                style={{
-                  background: tool === "opencode" ? "rgba(0,255,136,0.15)" : "var(--btn-bg)",
-                  color: tool === "opencode" ? "#00ff88" : "var(--dim)",
-                  border: `1px solid ${tool === "opencode" ? "rgba(0,255,136,0.4)" : "var(--input-border)"}`,
-                }}
-              >
-                OpenCode
-              </button>
-              <button
-                onClick={() => setTool("claude")}
-                type="button"
-                className="flex-1 py-2 rounded text-sm font-semibold transition-all"
-                style={{
-                  background: tool === "claude" ? "rgba(168,85,247,0.15)" : "var(--btn-bg)",
-                  color: tool === "claude" ? "#a855f7" : "var(--dim)",
-                  border: `1px solid ${tool === "claude" ? "rgba(168,85,247,0.4)" : "var(--input-border)"}`,
-                }}
-              >
-                Claude Code
-              </button>
-            </div>
-          </div>
-
           <div className="space-y-1.5">
             <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
               Branching
@@ -1219,7 +1172,7 @@ function BranchPrModal({
             Cancel
           </button>
           <button
-            onClick={() => onConfirm({ useBranchPr, tool })}
+            onClick={() => onConfirm({ useBranchPr })}
             type="button"
             className="px-4 py-1.5 rounded text-xs font-bold transition-opacity hover:opacity-80"
             style={{
@@ -1300,8 +1253,8 @@ export default function SchedulerPage() {
     });
   }, []);
 
-  const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean; tool: "opencode" | "claude" }) => {
-    const { useBranchPr, tool } = opts;
+  const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean }) => {
+    const { useBranchPr } = opts;
     const { issue, milestone, projectPath, repoName } = branchPrModal;
     setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "", repoName: "" });
 
@@ -1323,36 +1276,7 @@ export default function SchedulerPage() {
             title,
             description,
             workspace: projectPath,
-            preferred_tool: tool,
-            schedule_mode: "anytime",
-          }),
-        });
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || "Failed to create task");
-        }
-        fetchAll();
-      } catch (err) {
-        console.error("Failed to add milestone to queue:", err);
-      } finally {
-        setAddingMilestoneId(null);
-      }
-    } else if (issue) {
-      setAddingIssueId(issue.id);
-      try {
-        let description = `GitHub Issue #${issue.number}: ${issue.title}\nRepository: ${repoName}\nWorking directory: ${projectPath}\n\n${issue.html_url}`;
-        if (useBranchPr) {
-          description += `\n\nIMPORTANT: Create a new branch for this work. When done, open a pull request.`;
-        }
-        const res = await fetch("/api/scheduler/tasks", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "coding",
-            title: `${repoName}: ${issue.title}`,
-            description,
-            workspace: projectPath,
-            preferred_tool: tool,
+            preferred_tool: "opencode",
             schedule_mode: "anytime",
           }),
         });

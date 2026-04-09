@@ -16,7 +16,6 @@ export interface Settings {
   models?: {
     openclaw?: string;
     opencode?: string;
-    claudecode?: string;
   };
 }
 

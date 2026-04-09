@@ -760,10 +760,8 @@ function SimpleModelPicker({
 function ModelsSection() {
   const [models, setModels] = useState<ORModel[]>([]);
   const [opencodeModels, setOpencodeModels] = useState<SimpleModel[]>([]);
-  const [claudeCodeModels, setClaudeCodeModels] = useState<SimpleModel[]>([]);
   const [openclawModel, setOpenclawModel] = useState(DEFAULT_OPENCLAW_MODEL);
   const [opencodeModel, setOpencodeModel] = useState("");
-  const [claudecodeModel, setClaudecodeModel] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -775,10 +773,8 @@ function ModelsSection() {
       .then((d) => {
         setModels(d.models ?? []);
         setOpencodeModels(d.opencodeModels ?? []);
-        setClaudeCodeModels(d.claudeCodeModels ?? []);
         if (d.selected?.openclaw) setOpenclawModel(d.selected.openclaw);
         if (d.selected?.opencode) setOpencodeModel(d.selected.opencode);
-        if (d.selected?.claudecode) setClaudecodeModel(d.selected.claudecode);
         if (d.error) setError(d.error);
       })
       .catch(() => setError("Failed to load models"))
@@ -791,7 +787,7 @@ function ModelsSection() {
       const res = await fetch("/api/settings/models", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ openclaw: openclawModel, opencode: opencodeModel, claudecode: claudecodeModel }),
+        body: JSON.stringify({ openclaw: openclawModel, opencode: opencodeModel }),
       });
       if (res.ok) { setSaved(true); setTimeout(() => setSaved(false), 3000); }
       else { const d = await res.json(); setError(d.error ?? "Save failed"); }
@@ -811,7 +807,7 @@ function ModelsSection() {
       }
     >
       <p className="text-xs" style={{ color: "#4a5568" }}>
-        Choose the default model for each tool. OpenClaw uses OpenRouter; OpenCode and Claude Code read from their config files.
+        Choose the default model for each tool. OpenClaw uses OpenRouter; OpenCode reads from its config file.
         {!loading && models.length > 0 && (
           <span> OpenClaw: <strong style={{ color: "#00ff88" }}>{freeCount} free</strong> / <strong style={{ color: "var(--dim)" }}>{models.length - freeCount} paid</strong>.</span>
         )}
@@ -841,18 +837,6 @@ function ModelsSection() {
             models={opencodeModels}
             loading={loading}
             accentColor="#a855f7"
-          />
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
-          <SimpleModelPicker
-            label="Claude Code — default model"
-            hint="Writes to ~/.claude/settings.json."
-            value={claudecodeModel}
-            onChange={setClaudecodeModel}
-            models={claudeCodeModels}
-            loading={loading}
-            accentColor="#00ff88"
           />
         </div>
       </div>

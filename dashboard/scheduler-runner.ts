@@ -29,7 +29,7 @@ interface Task {
   type: "coding" | "research";
   description: string;
   workspace?: string;
-  preferred_tool?: "claude" | "opencode" | "auto";
+  preferred_tool?: "opencode" | "auto";
   status: TaskStatus;
   schedule_mode?: string;
   schedule_time?: string;

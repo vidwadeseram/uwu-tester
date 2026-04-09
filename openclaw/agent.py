@@ -2,11 +2,11 @@
 """
 openclaw — scheduler agent for uwu-code
 Polls data/tasks.json every 10s.
-- coding tasks  → prompts passed directly to opencode or claude CLI in the workspace
+- coding tasks  → spawned via OpenCode Server (through the dashboard API)
 - research tasks → Anthropic / OpenAI / OpenRouter API directly
 Rate-limit/usage-limit → auto-reschedules the task 1 hour out and retries.
 No intermediate agent layer: prompts are built programmatically and sent straight
-to the tool (opencode / claude code) or the API.
+to the tool (opencode) or the API.
 """
 from __future__ import annotations
 
@@ -124,8 +124,8 @@ def validate_task_fields(data: dict[str, Any]) -> tuple[bool, str]:
     if schedule_mode and schedule_mode not in ("anytime", "once", "daily", "weekly", "manual"):
         return False, "schedule_mode must be one of: anytime, once, daily, weekly, manual"
     preferred_tool = data.get("preferred_tool")
-    if preferred_tool and preferred_tool not in ("claude", "opencode", "auto"):
-        return False, "preferred_tool must be one of: claude, opencode, auto"
+    if preferred_tool and preferred_tool not in ("opencode", "auto"):
+        return False, "preferred_tool must be one of: opencode, auto"
     return True, ""
 
 

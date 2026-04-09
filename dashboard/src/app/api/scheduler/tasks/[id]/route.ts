@@ -14,7 +14,7 @@ async function spawnTask(task: Record<string, unknown>) {
     description: String(task.description || ""),
     workspace: String(task.workspace || "/opt/workspaces"),
     type: (task.type as "coding" | "research") || "coding",
-    preferredTool: (task.preferred_tool as "opencode" | "claude" | "auto") || "opencode",
+    preferredTool: (task.preferred_tool as "opencode" | "auto") || "opencode",
   });
 }
 

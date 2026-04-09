@@ -6,7 +6,7 @@ import { randomUUID } from "crypto";
 interface CodingSessionInput {
   projectId: string;
   worktreeId?: string;
-  tool: "opencode" | "claude" | "codex";
+  tool: "opencode" | "codex";
   task: string;
 }
 

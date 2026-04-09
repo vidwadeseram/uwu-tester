@@ -9,10 +9,8 @@ import { checkAuth, readSettings, writeSettings } from "@/app/lib/settings";
 
 const DEFAULT_OPENCLAW_MODEL = "openrouter/free";
 const DEFAULT_OPENCODE_MODEL = "";
-const DEFAULT_CLAUDECODE_MODEL = "";
 
 const OPENCODE_CONFIG = path.join(os.homedir(), ".config", "opencode", "opencode.json");
-const CLAUDE_SETTINGS = path.join(os.homedir(), ".claude", "settings.json");
 
 export interface ORModel {
   id: string;
@@ -64,50 +62,30 @@ function getOpencodeModels(): SimpleModel[] {
   }
 }
 
-function getClaudeCodeModels(): SimpleModel[] {
-  return [
-    { id: "claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-    { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-    { id: "claude-opus-4-5", name: "Claude Opus 4.5" },
-    { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "claude-opus-4-1", name: "Claude Opus 4.1" },
-    { id: "claude-sonnet-4", name: "Claude Sonnet 4" },
-  ];
-}
-
 function getOpencodeSelected(): string {
   const cfg = readJsonFile(OPENCODE_CONFIG);
   return (cfg.model as string) ?? DEFAULT_OPENCODE_MODEL;
 }
 
-function getClaudeCodeSelected(): string {
-  const cfg = readJsonFile(CLAUDE_SETTINGS);
-  return (cfg.model as string) ?? DEFAULT_CLAUDECODE_MODEL;
-}
-
 export async function GET(_req: NextRequest) {
   const settings = readSettings();
-  const [opencodeModels, claudeModels] = [getOpencodeModels(), getClaudeCodeModels()];
+  const opencodeModels = getOpencodeModels();
 
   return NextResponse.json({
-    models: [], // OpenRouter models (openclaw) – fetched client-side via separate OR call
+    models: [],
     selected: {
       openclaw: settings.models?.openclaw ?? DEFAULT_OPENCLAW_MODEL,
       opencode: getOpencodeSelected(),
-      claudecode: getClaudeCodeSelected(),
     },
     opencodeModels,
-    claudeCodeModels: claudeModels,
   });
 }
 
 export async function POST(req: NextRequest) {
   if (!(await checkAuth(req))) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as { openclaw?: string; opencode?: string; claudecode?: string };
+  const body = await req.json() as { openclaw?: string; opencode?: string };
 
-  // Save openclaw model in settings.json
   const settings = readSettings();
   writeSettings({
     ...settings,
@@ -117,7 +95,6 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Save opencode model in ~/.config/opencode/opencode.json
   if (body.opencode !== undefined) {
     const cfg = readJsonFile(OPENCODE_CONFIG);
     if (body.opencode) {
@@ -126,17 +103,6 @@ export async function POST(req: NextRequest) {
       delete cfg.model;
     }
     writeJsonFile(OPENCODE_CONFIG, cfg);
-  }
-
-  // Save claude code model in ~/.claude/settings.json
-  if (body.claudecode !== undefined) {
-    const cfg = readJsonFile(CLAUDE_SETTINGS);
-    if (body.claudecode) {
-      cfg.model = body.claudecode;
-    } else {
-      delete cfg.model;
-    }
-    writeJsonFile(CLAUDE_SETTINGS, cfg);
   }
 
   return NextResponse.json({ ok: true });
