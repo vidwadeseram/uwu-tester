@@ -1079,16 +1079,36 @@ function BranchPrModal({
   onCancel,
 }: {
   state: BranchPrModalState;
-  onConfirm: (opts: { useBranchPr: boolean }) => void;
+  onConfirm: (opts: { useBranchPr: boolean; scheduleMode: "anytime" | "once"; oneTimeAt?: string }) => void;
   onCancel: () => void;
 }) {
   const [useBranchPr, setUseBranchPr] = useState<boolean>(true);
+  const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
+  const [oneTimeAt, setOneTimeAt] = useState(() => {
+    const d = new Date(Date.now() + 60 * 60 * 1000);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const hour = String(d.getHours()).padStart(2, "0");
+    const minute = String(d.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hour}:${minute}`;
+  });
 
   const taskLabel = state.milestone
     ? state.milestone.title
     : state.issue
       ? `#${state.issue.number} ${state.issue.title}`
       : "task";
+
+  function handleConfirm() {
+    if (scheduleMode === "later") {
+      const oneTimeDate = new Date(oneTimeAt);
+      if (Number.isNaN(oneTimeDate.getTime())) return;
+      onConfirm({ useBranchPr, scheduleMode: "once", oneTimeAt: oneTimeDate.toISOString() });
+    } else {
+      onConfirm({ useBranchPr, scheduleMode: "anytime" });
+    }
+  }
 
   return (
     <div
@@ -1111,6 +1131,53 @@ function BranchPrModal({
         </div>
 
         <div className="px-4 py-3 space-y-3">
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
+              When
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setScheduleMode("now")}
+                type="button"
+                className="flex-1 py-2 rounded text-xs font-semibold transition-all"
+                style={{
+                  background: scheduleMode === "now" ? "rgba(0,255,136,0.12)" : "var(--btn-bg)",
+                  color: scheduleMode === "now" ? "#00ff88" : "var(--dim)",
+                  border: `1px solid ${scheduleMode === "now" ? "rgba(0,255,136,0.3)" : "var(--input-border)"}`,
+                }}
+              >
+                Queue Now
+              </button>
+              <button
+                onClick={() => setScheduleMode("later")}
+                type="button"
+                className="flex-1 py-2 rounded text-xs font-semibold transition-all"
+                style={{
+                  background: scheduleMode === "later" ? "rgba(168,85,247,0.12)" : "var(--btn-bg)",
+                  color: scheduleMode === "later" ? "#a855f7" : "var(--dim)",
+                  border: `1px solid ${scheduleMode === "later" ? "rgba(168,85,247,0.3)" : "var(--input-border)"}`,
+                }}
+              >
+                Queue Later
+              </button>
+            </div>
+          </div>
+
+          {scheduleMode === "later" && (
+            <div className="space-y-1">
+              <label className="text-xs" htmlFor="queue-later-at" style={{ color: "#4a5568" }}>
+                Run at (local time)
+              </label>
+              <input
+                id="queue-later-at"
+                type="datetime-local"
+                style={INPUT}
+                value={oneTimeAt}
+                onChange={(e) => setOneTimeAt(e.target.value)}
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--dim)" }}>
               Branching
@@ -1154,16 +1221,16 @@ function BranchPrModal({
             Cancel
           </button>
           <button
-            onClick={() => onConfirm({ useBranchPr })}
+            onClick={handleConfirm}
             type="button"
             className="px-4 py-1.5 rounded text-xs font-bold transition-opacity hover:opacity-80"
             style={{
-              background: "rgba(0,255,136,0.15)",
-              color: "#00ff88",
-              border: "1px solid rgba(0,255,136,0.4)",
+              background: scheduleMode === "later" ? "rgba(168,85,247,0.15)" : "rgba(0,255,136,0.15)",
+              color: scheduleMode === "later" ? "#a855f7" : "#00ff88",
+              border: `1px solid ${scheduleMode === "later" ? "rgba(168,85,247,0.4)" : "rgba(0,255,136,0.4)"}`,
             }}
           >
-            Queue Now
+            {scheduleMode === "later" ? "Schedule" : "Queue Now"}
           </button>
         </div>
       </div>
@@ -1235,8 +1302,8 @@ export default function SchedulerPage() {
     });
   }, []);
 
-  const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean }) => {
-    const { useBranchPr } = opts;
+  const handleBranchPrConfirm = useCallback(async (opts: { useBranchPr: boolean; scheduleMode: "anytime" | "once"; oneTimeAt?: string }) => {
+    const { useBranchPr, scheduleMode, oneTimeAt } = opts;
     const { issue, milestone, projectPath, repoName } = branchPrModal;
     setBranchPrModal({ open: false, issue: null, milestone: null, projectPath: "", repoName: "" });
 
@@ -1250,17 +1317,24 @@ export default function SchedulerPage() {
         }
         const title = `${repoName}: ${milestone.title} - ${milestone.issues.length} issues`;
 
+        const payload: Record<string, unknown> = {
+          type: "coding",
+          title,
+          description,
+          workspace: projectPath,
+          preferred_tool: "opencode",
+          schedule_mode: scheduleMode,
+        };
+
+        if (scheduleMode === "once" && oneTimeAt) {
+          payload.one_time_at = oneTimeAt;
+          payload.scheduled_at = oneTimeAt;
+        }
+
         const res = await fetch("/api/scheduler/tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type: "coding",
-            title,
-            description,
-            workspace: projectPath,
-            preferred_tool: "opencode",
-            schedule_mode: "anytime",
-          }),
+          body: JSON.stringify(payload),
         });
         if (!res.ok) {
           const data = await res.json();
